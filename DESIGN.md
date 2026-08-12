@@ -69,6 +69,21 @@ The reasons:
   it came from (upstream URL + pinned tag/release) and every deliberate
   change made to the upstream version. Nothing is silently patched.
 
+The one thing `manifests.txt` does *not* cover, and can't: `kind create
+cluster` itself applies kindnetd (when `disableDefaultCNI: false`),
+CoreDNS, kube-proxy, and the `local-path-provisioner` + default
+`StorageClass` as part of cluster creation, before the Makefile ever reads
+a profile's `manifests.txt`. Those are kind's own bundled behavior, not
+something this repo controls without disabling and replacing them
+outright (which is exactly what the staged-but-unused
+`manifests/cni/calico.yaml` is for, on the CNI side - see below). Every
+profile's `make up` also passes `--wait 5m` to `kind create cluster`, so
+it blocks until node(s) report `Ready` (which requires the CNI to actually
+be up) before the Makefile starts applying `manifests.txt` - without that,
+`kubectl apply` could race ahead of a cluster where nothing can schedule
+yet, which matters even more for a future CNI-swapped profile than it
+does here.
+
 ## kindnetd stays the default CNI (for now)
 
 Both profiles set `networking.disableDefaultCNI: false` explicitly in
@@ -99,15 +114,45 @@ point of the profile-per-directory layout.
 ## HA control plane and the Envoy load balancer
 
 `kind/profiles/ha-control-plane/cluster.yaml` runs 3 control-plane nodes +
-2 workers, same pinned node image as `default`. With more than one
-control-plane node, kind stands up an additional Docker container running
-Envoy (as of kind v0.32.0 - this replaced an older HAProxy-based load
-balancer in earlier kind versions) in front of the kube-apiservers. The
-kubeconfig `server:` field and every control-plane node's own kubeadm join
-process point at that Envoy container, not at any individual apiserver.
-See `kind/profiles/ha-control-plane/cluster.yaml`'s header comment and the
-walkthrough in this repo's chat history / README for what to check if a
-control-plane node fails to join.
+2 workers, same pinned node image as `default`. Control-plane nodes use
+**stacked etcd** - each of the 3 control-plane containers runs its own
+etcd member alongside its own apiserver/controller-manager/scheduler,
+rather than etcd living on separate dedicated nodes. With more than one
+control-plane node, kind also stands up an additional Docker container
+(`<cluster-name>-external-load-balancer`) running Envoy (as of kind
+v0.32.0 - this replaced an older HAProxy-based load balancer in earlier
+kind versions) in front of the kube-apiservers. The kubeconfig `server:`
+field and every control-plane node's own kubeadm join process point at
+that Envoy container, not at any individual apiserver.
+
+Verified against a real cluster: Envoy's actual routing config is **not**
+the static `/etc/envoy/envoy.yaml` inside that container - that file is
+unused leftover from the base image (it's Envoy's stock demo config,
+routing to `www.envoyproxy.io`). The config kind actually runs is dynamic
+xDS resources the entrypoint script generates at container start:
+`/home/envoy/cds.yaml` (a `kube_apiservers` cluster listing all
+control-plane nodes by container hostname on port 6443, with active
+`/healthz` health checks) and `/home/envoy/lds.yaml` (a TCP proxy listener
+on 6443 forwarding to that cluster). If a control-plane node fails to
+join:
+
+- `docker ps` - confirm the LB container and all control-plane containers
+  actually exist and are running; a node that never started won't produce
+  a kubeadm error, it just won't be there.
+- `docker exec <lb-container> cat /home/envoy/cds.yaml` - check whether
+  the failing node is even listed as a backend, and whether Envoy has
+  marked it unhealthy. (The Envoy image has no shell utilities - no
+  `curl`/`wget` - so hitting its admin API from inside the container
+  doesn't work; reading the generated config files directly does.)
+- `docker logs <failing-cp-container>` - kind streams that node's boot and
+  `kubeadm join --control-plane` output here.
+- `docker exec -it <failing-cp-container> journalctl -u kubelet -f` - for
+  cases where `kubeadm join` succeeded but the kubelet itself can't reach
+  the endpoint or has a cert problem.
+- In practice, stale bootstrap tokens/certificate-keys (which kind manages
+  internally) are the most common real cause, and `make reset
+  PROFILE=ha-control-plane` is the practical fix rather than debugging
+  kubeadm token expiry by hand.
 
 ## Ingress: hostPort + node pinning, not a cloud LoadBalancer
 
@@ -128,6 +173,16 @@ place it can land that actually works.
   node - there's only one "special" node in that topology anyway.
 - `ha-control-plane`: the label and port mapping are on the first worker
   node instead, keeping the ingress controller off the apiserver nodes.
+
+The tradeoff accepted here: both profiles publish host ports 80/443
+directly on the Docker host, so **at most one ingress-enabled profile can
+run at a time** - bringing up a second one fails with a real Docker "port
+is already allocated" error, verified against an actual cluster (see
+`docs/findings.md`). This wasn't designed around, because doing so would
+mean giving one profile different host ports for ingress (e.g. 8080/8443)
+and documenting a different URL per profile - a special case that isn't
+worth it unless running both together becomes a real, not hypothetical,
+need.
 
 ## metrics-server and `--kubelet-insecure-tls`
 
