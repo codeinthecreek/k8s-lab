@@ -6,6 +6,8 @@
 # with one deliberate change: an `ingress-ready: "true"` nodeSelector added
 # to the controller Deployment's pod spec (search this file for "Added to
 # upstream" for the full rationale). Everything else is upstream as-is.
+# License: Apache-2.0 (this repo's own BSD-3-Clause LICENSE does not apply
+# to this file, including the added nodeSelector).
 apiVersion: v1
 kind: Namespace
 metadata:

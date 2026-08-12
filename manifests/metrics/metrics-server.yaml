@@ -6,6 +6,8 @@
 #   kubectl kustomize "https://github.com/kubernetes-sigs/metrics-server/manifests/overlays/release?ref=v0.9.0"
 # plus one deliberate change: --kubelet-insecure-tls added to the
 # container args (search this file for "Added to upstream" for why).
+# License: Apache-2.0 (this repo's own BSD-3-Clause LICENSE does not apply
+# to this file, including the added flag).
 apiVersion: v1
 kind: ServiceAccount
 metadata:

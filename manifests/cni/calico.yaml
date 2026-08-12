@@ -5,6 +5,8 @@
 # in its manifests.txt in place of relying on kindnetd. See DESIGN.md for
 # the swap-in steps. Fetched verbatim from:
 # https://raw.githubusercontent.com/projectcalico/calico/v3.32.1/manifests/calico.yaml
+# License: Apache-2.0 (unmodified upstream content; this repo's own
+# BSD-3-Clause LICENSE does not apply to this file).
 #
 ---
 # Source: calico/templates/calico-kube-controllers.yaml
