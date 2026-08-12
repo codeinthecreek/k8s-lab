@@ -1,0 +1,2 @@
+manifests/ingress/ingress-nginx.yaml
+manifests/metrics/metrics-server.yaml

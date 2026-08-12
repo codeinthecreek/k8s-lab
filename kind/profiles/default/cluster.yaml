@@ -1,0 +1,47 @@
+# default profile: 1 control-plane + 2 workers.
+#
+# Node image is pinned by digest so `make up` produces the same node
+# filesystem/kubeadm/kubelet/containerd bits every time, regardless of what
+# "latest" resolves to on the day you run it. Version source: kind v0.32.0
+# release notes (https://github.com/kubernetes-sigs/kind/releases/tag/v0.32.0).
+#
+# Cluster name is NOT set here on purpose - the Makefile always passes
+# --name k8s-lab-default on the CLI, and a CLI --name silently overrides
+# whatever is in this file. Keeping it out avoids two sources of truth that
+# can drift apart.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+
+networking:
+  # Explicit, not just "the default": kindnetd stays installed as the CNI.
+  # manifests/cni/calico.yaml exists for a future profile that flips this to
+  # true and applies Calico instead - see DESIGN.md.
+  disableDefaultCNI: false
+
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5
+    # Publishes the node container's 80/443 to the Docker host, and labels
+    # this node so the ingress-nginx controller pod (see
+    # manifests/ingress/ingress-nginx.yaml) is scheduled onto the node that
+    # actually has those ports mapped, instead of landing on a worker where
+    # the mapping wouldn't exist.
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: 80
+        protocol: TCP
+      - containerPort: 443
+        hostPort: 443
+        protocol: TCP
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+
+  - role: worker
+    image: kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5
+
+  - role: worker
+    image: kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5

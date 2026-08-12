@@ -1,0 +1,54 @@
+# ha-control-plane profile: 3 control-plane + 2 workers.
+#
+# Same pinned node image/digest as the default profile - see
+# kind/profiles/default/cluster.yaml for the version source. Keeping the
+# image identical across profiles means a profile diff only shows topology
+# changes, not a version bump hiding in the same line.
+#
+# With more than one control-plane node, kind puts an Envoy container
+# (docker.io/envoyproxy/envoy) in front of the kube-apiservers as of kind
+# v0.32.0 - it replaced the older HAProxy-based load balancer. That
+# container is what `kubectl config` / kubeconfig ends up pointing at
+# (server: https://<envoy-lb-container>:6443); kubeadm on each control-plane
+# node talks to the same address, so all three apiservers join through the
+# same front door instead of each other directly. `docker ps` will show it
+# as a container named k8s-lab-ha-control-plane-external-load-balancer.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+
+networking:
+  # Same as default: kindnetd stays the CNI here too.
+  disableDefaultCNI: false
+
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5
+
+  - role: control-plane
+    image: kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5
+
+  - role: control-plane
+    image: kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5
+
+  - role: worker
+    image: kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5
+    # Ingress hostPort mapping and the ingress-ready label live on a worker
+    # here instead of a control-plane node (unlike the default profile) -
+    # keeps the ingress controller off the apiserver nodes, and there's no
+    # single "the" control-plane node to pick in an HA topology anyway.
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: 80
+        protocol: TCP
+      - containerPort: 443
+        hostPort: 443
+        protocol: TCP
+    kubeadmConfigPatches:
+      - |
+        kind: JoinConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+
+  - role: worker
+    image: kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5
