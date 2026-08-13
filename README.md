@@ -19,15 +19,15 @@ Workstation (Linux)
 Docker daemon
   +----------------------------------------------------------------+
   |  "kind" bridge network                                         |
-  |                                                                 |
+  |                                                                |
   |  +---------------------------+   +---------------------------+ |
   |  | control-plane container   |   | worker container          | |
   |  |---------------------------|   |---------------------------| |
   |  | containerd                |   | containerd                | |
   |  | kubelet                   |   | kubelet                   | |
-  |  | kube-apiserver     <------+---+--- published to host       | |
+  |  | kube-apiserver     <------+---+--- published to host      | |
   |  | etcd                      |   | kube-proxy                | |
-  |  | kube-scheduler            |   | (pods scheduled here)      | |
+  |  | kube-scheduler            |   | (pods scheduled here)     | |
   |  | kube-controller-manager   |   +---------------------------+ |
   |  | kube-proxy                |                                 |
   |  +---------------------------+                                 |
