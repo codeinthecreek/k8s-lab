@@ -85,3 +85,24 @@ make down PROFILE=ha-control-plane
 - A `503` immediately after creating a new `Ingress` resource is normal
   propagation delay while nginx reloads its config - retry after a few
   seconds before assuming something is broken.
+
+## Timing
+
+- **Up (time to ready-for-tests)** is the number that varies, by profile
+  and by Docker image cache state:
+  - `default`: kind reports control-plane `Ready` in ~20-30s; ingress-nginx
+    and metrics-server were both already up by the time they were checked
+    afterward, so ready-for-tests tracks close to that node-ready time on
+    a warm image cache.
+  - `ha-control-plane`: kind reports the first control-plane node `Ready`
+    in ~1-1.5min, but joining the other 2 control-plane nodes + LB
+    container + 2 workers pushes `make up` itself past that, and
+    ingress-nginx then needs roughly another 1-2 minutes on top before
+    it's actually `Ready` (see `docs/findings.md` for why). Budget ~4-5
+    minutes to ready-for-tests on a warm cache.
+- **Down** is consistent regardless of profile: `kind delete cluster` just
+  removes the node/LB containers, and was well under 30s in both cases.
+
+These are observational numbers from one run on one machine, not a
+benchmark - a cold Docker image cache (first-ever run, or after
+`docker system prune`) will push the "up" numbers well past the above.

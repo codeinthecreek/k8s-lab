@@ -4,6 +4,46 @@ Running log of problems hit while building/operating this lab and what
 fixed them. Newest entries at the top. Not a changelog of features -
 `git log` covers that. This is for things that cost time figuring out.
 
+## 2026-08-13 - ha-control-plane's ingress-nginx takes noticeably longer to become Ready than default's
+
+Re-ran the manual verification in `docs/testing.md` for both profiles back
+to back (full run: ~13.5 minutes). On `default`, ingress-nginx's controller
+pod was already `1/1 Running` by the time it got checked - no extra
+waiting needed beyond the manifests being applied. On `ha-control-plane`,
+`kubectl wait --for=condition=ready` on that same pod timed out at 120s,
+and `kubectl describe pod` showed:
+
+```
+Warning  FailedMount  74s (x7 over 106s)  kubelet  MountVolume.SetUp failed for volume "webhook-cert" : secret "ingress-nginx-admission" not found
+```
+
+Not a bug - this is startup ordering, not a broken manifest. The
+controller Deployment's pod spec mounts a Secret
+(`ingress-nginx-admission`) that only exists once the
+`ingress-nginx-admission-create`/`-patch` Jobs finish running, so the
+`FailedMount` events are expected right up until those Jobs complete; only
+after that does the controller pod even start pulling its own image. It
+resolves on its own - a longer `kubectl wait` timeout (120s was enough)
+or just re-checking after a minute is all that's needed, not any config
+change.
+
+Rough timing observed, for budgeting future test runs (varies by machine
+and Docker image cache state - these numbers assume a warm cache):
+
+- `default`: kind reports control-plane `Ready` in ~20-30s; `make up`
+  itself takes a bit longer than that (image checks, `Preparing nodes`);
+  ingress-nginx needs no extra wait on top. Teardown: well under 30s.
+- `ha-control-plane`: kind reports the first control-plane node `Ready` in
+  ~1-1.5min, but joining the other 2 control-plane nodes + LB container +
+  2 workers means `make up` takes noticeably longer than `default`'s
+  single-node case to actually return. ingress-nginx then needs another
+  ~1-2 minutes on top of that for the `FailedMount`/image-pull sequencing
+  above. Teardown: still well under 30s.
+
+Budget at least 10-15 minutes to run through both profiles in
+`docs/testing.md`, more on a fully cold image cache (first-ever run, or
+after `docker system prune`).
+
 ## 2026-08-12 - default and ha-control-plane can't run at the same time
 
 Brought up `default`, verified it end-to-end (nodes Ready, ingress
