@@ -5,6 +5,64 @@ A reproducible kind (kubernetes-sigs/kind) Kubernetes lab. See
 config files instead of a templated one, and every add-on (ingress,
 metrics, CNI swap) as an explicit manifest instead of a bundled toggle.
 
+## Architecture
+
+```
+Workstation (Linux)
+==========================================================================
+  kind (CLI)          kubectl (CLI)         repo: k8s-lab/
+     |                     |                   kind/profiles/<name>/cluster.yaml
+     | Docker API          | kubeconfig          -> ~/.kube/config
+     | (create/destroy)    | HTTPS to 127.0.0.1:<port>
+     v                     v
+==========================================================================
+Docker daemon
+  +----------------------------------------------------------------+
+  |  "kind" bridge network                                         |
+  |                                                                 |
+  |  +---------------------------+   +---------------------------+ |
+  |  | control-plane container   |   | worker container          | |
+  |  |---------------------------|   |---------------------------| |
+  |  | containerd                |   | containerd                | |
+  |  | kubelet                   |   | kubelet                   | |
+  |  | kube-apiserver     <------+---+--- published to host       | |
+  |  | etcd                      |   | kube-proxy                | |
+  |  | kube-scheduler            |   | (pods scheduled here)      | |
+  |  | kube-controller-manager   |   +---------------------------+ |
+  |  | kube-proxy                |                                 |
+  |  +---------------------------+                                 |
+  +----------------------------------------------------------------+
+
+  Container counts per profile (not shown above - each box is one
+  container, replicated per profile):
+    default:           1 control-plane container,  2 worker containers
+    ha-control-plane:   3 control-plane containers (Envoy LB in front
+                          of them, see DESIGN.md), 2 worker containers
+==========================================================================
+                    layered on top, explicit manifests
+                    (kubectl apply -f, per profile's manifests.txt)
+
+  CNI            kindnetd (default)  or  Calico (staged, not yet wired
+                 pod-to-pod routing across      into a profile - see
+                 node containers                DESIGN.md)
+
+  Ingress        ingress-nginx (hostPort variant)
+                 bound to the node labeled ingress-ready=true
+                 host 80/443 --------> extraPortMappings in cluster.yaml
+                 --------> that node's hostPort --------> Service
+
+  Storage        local-path-provisioner (kind default)
+                 PVC --------> hostPath dir inside the node container
+                 (NOT real network storage - documented limitation)
+
+  Metrics        metrics-server
+                 --kubelet-insecure-tls required (kind's kubelet certs
+                 aren't signed for container hostnames)
+==========================================================================
+```
+
+See [DESIGN.md](DESIGN.md) for the reasoning behind each of these pieces.
+
 ## Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/) (or Podman configured as
