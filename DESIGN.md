@@ -44,6 +44,11 @@ duplication here is legible, and there are only two profiles today. If a
 third or fourth profile makes the duplication genuinely painful, revisit
 this - but don't preemptively solve a problem two files don't have.
 
+One caveat to "independent, run whichever you want": today's two profiles
+are *not* independent at runtime, because both publish the same fixed host
+ports for ingress - see "Ingress: hostPort + node pinning" below for why,
+and `docs/findings.md` for what hitting that looks like in practice.
+
 ## Why every add-on is an explicit applied manifest, not a toggle
 
 kind (and other local Kubernetes tools) increasingly offer "just turn on

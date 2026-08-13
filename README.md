@@ -17,6 +17,14 @@ Workstation (Linux)
      v                     v
 ==========================================================================
 Docker daemon
+  Two host boundaries get crossed here, not one:
+    host <apiserver-port> -----> kube-apiserver (kind's default,
+                                  one random port per cluster)
+    host 80/443           -----> extraPortMappings for ingress
+                                  (fixed in each profile's cluster.yaml)
+  Everything else - etcd, inter-node traffic, pod-to-pod networking -
+  stays inside the kind bridge network below.
+
   +----------------------------------------------------------------+
   |  "kind" bridge network                                         |
   |                                                                |
@@ -60,6 +68,27 @@ Docker daemon
                  aren't signed for container hostnames)
 ==========================================================================
 ```
+
+Key relationships this makes explicit:
+
+- **kind talks to Docker, not Kubernetes** - the top-left arrow into the
+  daemon is separate from kubectl's arrow into the apiserver.
+- **Each node is a full container, not a process** - containerd and kubelet
+  run inside it, same as they would on a VM.
+- **Two host boundaries get crossed, not one**: the apiserver port (one
+  random port per cluster, kind's default) and host 80/443 via each
+  profile's `extraPortMappings` for ingress. Everything else - etcd,
+  inter-node traffic, pod-to-pod networking - stays inside the kind bridge
+  network. Since 80/443 are fixed host ports named explicitly in each
+  profile's `cluster.yaml` (unlike the auto-assigned apiserver port),
+  ingress is what actually blocks two ingress-enabled profiles from running
+  at once - see the port-conflict note below and `docs/findings.md`.
+- **Ingress traffic makes two hops**: host port -> node container's
+  hostPort -> Service/Pod - worth remembering when debugging a 502 that
+  "should" be a simple Service issue.
+- **The four add-on rows are independent knobs** - each profile's
+  `manifests.txt` picks which of these get applied, which is the whole
+  point of keeping them as separate files rather than a template.
 
 See [DESIGN.md](DESIGN.md) for the reasoning behind each of these pieces.
 
