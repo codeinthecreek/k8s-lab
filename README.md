@@ -169,6 +169,31 @@ Run `make list-profiles` to list them from the filesystem directly.
 
 `PROFILE` defaults to `default` if omitted.
 
+## Lab helpers
+
+`lab-helpers/` holds infrastructure that supports working through specific
+lab exercises, not the reproducible lab itself - it's never referenced
+from a profile's `manifests.txt` and never touched by `make
+up`/`down`/`reset`.
+
+`lab-helpers/nfs-server/` is a real NFS server (container, on the `kind`
+Docker network) for a PersistentVolume/PersistentVolumeClaim lab
+exercise. See
+[lab-helpers/nfs-server/README.md](lab-helpers/nfs-server/README.md) for
+usage and a load-bearing gotcha (the export's `fsid=0` means clients mount
+at path `/`, not `/nfsshare`).
+
+| Target                                  | Does |
+|-------------------------------------------|------|
+| `make nfs-up`                             | Start the NFS server container (idempotent; requires a kind cluster already up, any profile) |
+| `make nfs-down`                           | Stop and remove it (`lab-helpers/nfs-server/data/` persists) |
+| `make nfs-status`                         | Show the container's status and, if `showmount` is installed on the host, attempt to list exports |
+| `make nfs-client-install PROFILE=x`       | Install `nfs-common` into every node container of that profile (idempotent) |
+
+`nfs-client-install` must be re-run any time the target profile's nodes
+are recreated (`make reset`, or `down` then `up`) - node containers are
+ephemeral and don't retain packages installed into them after creation.
+
 ## Adding a new profile
 
 No code changes needed - the Makefile and manifests are profile-agnostic.
@@ -192,6 +217,7 @@ worked example (adding a `calico` profile using the already-staged
 ```
 DESIGN.md                      architecture decisions and rationale
 docs/findings.md                running log of issues hit and fixes
+docs/testing.md                 manual verification commands
 kind/profiles/<name>/
   cluster.yaml                  kind cluster config for this profile
   manifests.txt                 ordered list of manifest paths to apply
@@ -199,5 +225,7 @@ manifests/
   cni/calico.yaml                staged, not applied by any profile yet
   ingress/ingress-nginx.yaml      kind hostPort variant, applied by both profiles
   metrics/metrics-server.yaml     applied by both profiles
+lab-helpers/
+  nfs-server/                    NFS server for a PV/PVC lab exercise (not part of make up)
 Makefile
 ```

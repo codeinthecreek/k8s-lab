@@ -4,6 +4,38 @@ Running log of problems hit while building/operating this lab and what
 fixed them. Newest entries at the top. Not a changelog of features -
 `git log` covers that. This is for things that cost time figuring out.
 
+## 2026-08-21 - itsthenetwork/nfs-server-alpine is NFSv4-only, so showmount can never work against it
+
+Built `lab-helpers/nfs-server/` (NFS-backed PV/PVC lab helper) around
+`itsthenetwork/nfs-server-alpine`. Tried `showmount -e` against it as a
+"confirm the export list" check and got `clnt_create: RPC: Program not
+registered` even though the container logs said `Startup successful` and
+`exportfs -v` showed the export correctly. `rpcinfo -p <container-ip>`
+confirmed why: only `100000` (portmapper) and `100003 vers 4` (nfs) are
+registered - no `100005` (mountd/MOUNT protocol). `docker exec ... ps aux`
+showed why: `rpc.mountd --no-udp --no-nfs-version 2 --no-nfs-version 3` -
+this image runs NFSv4-only by default, and NFSv4 doesn't use the separate
+MOUNT protocol at all (it's folded into the main NFS protocol via the
+`fsid=0` pseudo-root). `showmount` only ever speaks MOUNT protocol, so it
+can't list exports here regardless of server health - not a timing issue,
+not fixable by waiting longer or retrying.
+
+Separately: `showmount -e k8s-lab-nfs-server` (by container name) also
+fails on its own, independent of the above - Docker's embedded DNS only
+resolves container names *between* containers on the same user-defined
+network, not from the host. Had to resolve the container's IP via `docker
+inspect ... NetworkSettings.Networks` and use that instead. The container
+name works fine as the NFS server address from *inside* other containers
+on the `kind` network (e.g. `mount -t nfs k8s-lab-nfs-server:/ ...` from a
+kind node), just not from the host shell.
+
+Fix: `make nfs-status` uses the container's IP (not name) for `showmount`,
+and treats a `showmount` failure as expected/non-fatal, printing an
+explanation instead of a bare RPC error. The actual verification that
+matters is a real `mount -t nfs k8s-lab-nfs-server:/ ...` from a node
+container (documented in `lab-helpers/nfs-server/README.md`), not
+`showmount`.
+
 ## 2026-08-13 - ha-control-plane's ingress-nginx takes noticeably longer to become Ready than default's
 
 Re-ran the manual verification in `docs/testing.md` for both profiles back
