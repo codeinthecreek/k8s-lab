@@ -4,6 +4,33 @@ Running log of problems hit while building/operating this lab and what
 fixed them. Newest entries at the top. Not a changelog of features -
 `git log` covers that. This is for things that cost time figuring out.
 
+## 2026-08-24 - ImagePullBackOff on kube-webhook-certgen was a host DNS problem, not a manifest problem
+
+While restoring the vendored ingress-nginx manifest after a Helm-based
+exercise, the `kube-webhook-certgen` Job pod sat in `ImagePullBackOff`.
+`kubectl describe pod` showed:
+
+```
+failed to resolve reference "<registry>/<image>@sha256:...":
+failed to do request: Head "https://<mirror-domain>/...":
+dial tcp: lookup <mirror-domain> on <docker-embedded-resolver>:53: server misbehaving
+```
+
+Not a bad manifest or a bad digest - the host's DNS resolver was failing to
+resolve the image registry's domain, and Docker's embedded resolver just
+surfaces that as `server misbehaving`. Confirmed by resolving the same
+domain directly on the host and seeing it also fail there, independent of
+Docker/kind entirely.
+
+Fix: restarted the host's DNS resolver service, confirmed the domain
+resolved again, then `kubectl delete pod ...` on the stuck pod so the Job
+controller retried immediately instead of waiting out kubelet's image-pull
+backoff.
+
+If you hit `ImagePullBackOff` with a `server misbehaving` DNS error during
+`make up` or a manifest re-apply, check host DNS resolution for the image
+registry's domain before assuming the manifest or digest is wrong.
+
 ## 2026-08-21 - itsthenetwork/nfs-server-alpine is NFSv4-only, so showmount can never work against it
 
 Built `lab-helpers/nfs-server/` (NFS-backed PV/PVC lab helper) around
