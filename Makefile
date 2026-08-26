@@ -42,8 +42,28 @@ kubeconfig:
 	kind export kubeconfig --name $(CLUSTER_NAME)
 
 status:
-	kubectl --context $(CONTEXT) get nodes -o wide
-	kubectl --context $(CONTEXT) get pods -A
+	@if [ "$(origin PROFILE)" = "command line" ]; then \
+		cluster="$(CLUSTER_NAME)"; \
+	else \
+		matches="$$(kind get clusters 2>/dev/null | grep '^k8s-lab-')"; \
+		count="$$(printf '%s\n' "$$matches" | grep -c .)"; \
+		if [ "$$count" -eq 0 ]; then \
+			echo "no k8s-lab-* kind cluster is currently up" >&2; \
+			exit 1; \
+		elif [ "$$count" -gt 1 ]; then \
+			echo "multiple k8s-lab-* clusters are up - pass PROFILE explicitly:" >&2; \
+			printf '%s\n' "$$matches" | sed 's/^k8s-lab-/  /' >&2; \
+			exit 1; \
+		fi; \
+		cluster="$$matches"; \
+	fi; \
+	if ! kind get clusters 2>/dev/null | grep -qx "$$cluster"; then \
+		echo "cluster $$cluster is not up (context kind-$$cluster not found)" >&2; \
+		exit 1; \
+	fi; \
+	echo "--- profile: $${cluster#k8s-lab-} (context kind-$$cluster) ---"; \
+	kubectl --context kind-$$cluster get nodes -o wide; \
+	kubectl --context kind-$$cluster get pods -A
 
 # --- lab-helpers/nfs-server (NFS-backed PV/PVC lab exercise) --------------
 
