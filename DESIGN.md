@@ -89,19 +89,20 @@ be up) before the Makefile starts applying `manifests.txt` - without that,
 yet, which matters even more for a future CNI-swapped profile than it
 does here.
 
-## kindnetd stays the default CNI (for now)
+## kindnetd stays the default CNI on default and ha-control-plane
 
-Both profiles set `networking.disableDefaultCNI: false` explicitly in
-`cluster.yaml` - not by omitting the field (which defaults to the same
-value), but by writing it out, so it's a visible decision rather than
-something you'd have to know kind's default to notice.
+`default` and `ha-control-plane` both set `networking.disableDefaultCNI: false`
+explicitly in `cluster.yaml` - not by omitting the field (which defaults to
+the same value), but by writing it out, so it's a visible decision rather
+than something you'd have to know kind's default to notice.
 
-`manifests/cni/calico.yaml` (Calico v3.32.1, fetched verbatim from
+`kind/profiles/calico/` swaps kindnetd for Calico (`manifests/cni/calico.yaml`,
+v3.32.1, fetched verbatim from
 `https://raw.githubusercontent.com/projectcalico/calico/v3.32.1/manifests/calico.yaml`)
-is staged in the repo but **not referenced by either profile's
-`manifests.txt`**. It exists so that adding a `calico` profile later is a
-small, mechanical change rather than a research project. To add it
-yourself:
+because kindnetd does not enforce NetworkPolicy - it's needed to test and
+demonstrate real NetworkPolicy enforcement. It was added by following the
+same mechanical steps documented here, in case another CNI-swapped profile
+is needed later:
 
 1. `cp -r kind/profiles/default kind/profiles/calico`
 2. In `kind/profiles/calico/cluster.yaml`, flip `disableDefaultCNI: false`

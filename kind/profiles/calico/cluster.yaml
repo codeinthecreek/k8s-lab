@@ -1,4 +1,21 @@
-# default profile: 1 control-plane + 2 workers.
+# calico profile: 1 control-plane + 2 workers, same topology as default but
+# with kindnetd disabled in favor of Calico (manifests/cni/calico.yaml,
+# v3.32.1). Exists to test and demonstrate NetworkPolicy enforcement -
+# kindnetd does not enforce NetworkPolicy at all, so a real policy-enforcing
+# CNI is required here. See DESIGN.md's "kindnetd stays the default CNI on
+# default and ha-control-plane" section for the swap-in steps this profile
+# follows.
+#
+# podSubnet is deliberately left unset here, same as default and
+# ha-control-plane. manifests/cni/calico.yaml has no CALICO_IPV4POOL_CIDR
+# set, so calico-kube-controllers auto-creates its default-ipv4-ippool from
+# each node's node.spec.podCIDR - which kubeadm assigns from kind's default
+# pod-network-cidr (10.244.0.0/16) since this cluster.yaml doesn't override
+# it. Verified against a real cluster: `kubectl get ippool -o yaml` shows
+# default-ipv4-ippool at 10.244.0.0/16, and pods actually get IPs in that
+# range - not Calico's commonly-cited 192.168.0.0/16 default, which only
+# applies when CALICO_IPV4POOL_CIDR is explicitly set or podCIDR isn't
+# available. Nothing to align here since there's only one CIDR in play.
 #
 # Node image is pinned by digest so `make up` produces the same node
 # filesystem/kubeadm/kubelet/containerd bits every time, regardless of what
@@ -6,17 +23,17 @@
 # release notes (https://github.com/kubernetes-sigs/kind/releases/tag/v0.32.0).
 #
 # Cluster name is NOT set here on purpose - the Makefile always passes
-# --name k8s-lab-default on the CLI, and a CLI --name silently overrides
+# --name k8s-lab-calico on the CLI, and a CLI --name silently overrides
 # whatever is in this file. Keeping it out avoids two sources of truth that
 # can drift apart.
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 
 networking:
-  # Explicit, not just "the default": kindnetd stays installed as the CNI.
-  # kind/profiles/calico/ flips this to true and applies
-  # manifests/cni/calico.yaml instead - see DESIGN.md.
-  disableDefaultCNI: false
+  # kindnetd does not enforce NetworkPolicy - that's the whole reason this
+  # profile exists. manifests/cni/calico.yaml is applied first in
+  # manifests.txt to take its place.
+  disableDefaultCNI: true
 
 nodes:
   - role: control-plane

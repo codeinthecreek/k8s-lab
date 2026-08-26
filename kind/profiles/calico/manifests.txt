@@ -1,0 +1,3 @@
+manifests/cni/calico.yaml
+manifests/ingress/ingress-nginx.yaml
+manifests/metrics/metrics-server.yaml

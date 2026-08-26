@@ -1,9 +1,9 @@
-# Calico v3.32.1 - NOT currently applied by any profile.
-#
-# This file is staged for a future calico profile (kind/profiles/calico/)
-# that sets disableDefaultCNI: true in its cluster.yaml and lists this file
-# in its manifests.txt in place of relying on kindnetd. See DESIGN.md for
-# the swap-in steps. Fetched verbatim from:
+# Calico v3.32.1 - applied by kind/profiles/calico/manifests.txt (first
+# line, before ingress-nginx/metrics-server) so that profile can test and
+# demonstrate NetworkPolicy enforcement. That profile sets
+# disableDefaultCNI: true in its cluster.yaml in place of relying on
+# kindnetd. See DESIGN.md for the swap-in steps this followed. Fetched
+# verbatim from:
 # https://raw.githubusercontent.com/projectcalico/calico/v3.32.1/manifests/calico.yaml
 # License: Apache-2.0 (unmodified upstream content; this repo's own
 # BSD-3-Clause LICENSE does not apply to this file).
