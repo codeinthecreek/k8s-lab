@@ -159,17 +159,14 @@ Run `make list-profiles` to list them from the filesystem directly.
 
 ## Makefile targets
 
-| Target                       | Does |
-|-------------------------------|------|
-| `make up PROFILE=x`           | `kind create cluster` with the profile's `cluster.yaml`, then `kubectl apply -f` each path in the profile's `manifests.txt`, in order |
-| `make down PROFILE=x`         | `kind delete cluster` for that profile |
-| `make reset PROFILE=x`        | `down` then `up` |
-| `make list-profiles`          | List `kind/profiles/*` |
-| `make kubeconfig PROFILE=x`   | `kind export kubeconfig` for that profile |
-| `make status`                 | Auto-detects whichever profile's cluster is currently running and shows `kubectl get nodes -o wide` and `get pods -A` against it |
-| `make status PROFILE=x`       | Same, against that specific profile's context (errors clearly if it isn't up) |
-
-`PROFILE` defaults to `default` if omitted.
+| Target                       | Action | If `PROFILE` is omitted |
+|-------------------------------|--------|--------------------------|
+| `make up PROFILE=x`           | `kind create cluster` with the profile's `cluster.yaml`, then `kubectl apply -f` each path in the profile's `manifests.txt`, in order | Uses `default` |
+| `make down PROFILE=x`         | `kind delete cluster` for that profile | Uses `default` |
+| `make reset PROFILE=x`        | `down` then `up` | Uses `default` |
+| `make list-profiles`          | List `kind/profiles/*` | n/a - no `PROFILE` |
+| `make kubeconfig PROFILE=x`   | `kind export kubeconfig` for that profile | Uses `default` |
+| `make status PROFILE=x`       | `kubectl get nodes -o wide` and `get pods -A` against that profile's context (errors clearly if it isn't up) | Auto-detects whichever profile's cluster is currently running |
 
 ## Lab helpers
 
