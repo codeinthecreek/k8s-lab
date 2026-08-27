@@ -105,7 +105,7 @@ See [DESIGN.md](DESIGN.md) for the reasoning behind each of these pieces.
 
 ```
 make up                       # PROFILE defaults to "default"
-make status
+make status                   # auto-detects whichever profile is running
 ```
 
 That creates a 1 control-plane + 2 worker cluster named
@@ -129,10 +129,10 @@ make status PROFILE=ha-control-plane
 make down PROFILE=ha-control-plane
 ```
 
-Profiles are independent clusters (`k8s-lab-<profile>`) and their cluster
-API ports don't conflict, so they can generally run side by side. **Both
-current profiles are the exception**, though: each publishes host ports
-80/443 for ingress-nginx (`default` on its control-plane node,
+Profiles are independent clusters (`k8s-lab-<profile>`), and their cluster
+API ports don't conflict with each other. **But only one can be up at a
+time in practice**: every current profile also publishes host ports 80/443
+for ingress-nginx (`default` and `calico` on their control-plane node,
 `ha-control-plane` on a worker), and Docker will only let one container
 anywhere hold a given host port. Bringing up a second one while the first
 is still running fails with:
@@ -145,7 +145,7 @@ docker: Error response from daemon: failed to set up container networking:
 `make down PROFILE=<other>` first if you hit that - see
 [docs/findings.md](docs/findings.md) for how this was found and why it's
 not fixed in config. A future profile could avoid the clash by mapping
-ingress to different host ports, but neither profile here does.
+ingress to different host ports, but none here do.
 
 Available profiles:
 
@@ -153,6 +153,7 @@ Available profiles:
 |--------------------|----------------------------------|-------|
 | `default`          | 1 control-plane + 2 workers      | kindnetd CNI |
 | `ha-control-plane`  | 3 control-plane + 2 workers      | kindnetd CNI; Envoy load-balances the 3 apiservers |
+| `calico`            | 1 control-plane + 2 workers      | Calico CNI (kindnetd disabled); enforces NetworkPolicy, unlike kindnetd |
 
 Run `make list-profiles` to list them from the filesystem directly.
 
@@ -165,7 +166,8 @@ Run `make list-profiles` to list them from the filesystem directly.
 | `make reset PROFILE=x`        | `down` then `up` |
 | `make list-profiles`          | List `kind/profiles/*` |
 | `make kubeconfig PROFILE=x`   | `kind export kubeconfig` for that profile |
-| `make status PROFILE=x`       | `kubectl get nodes -o wide` and `get pods -A` against that profile's context |
+| `make status`                 | Auto-detects whichever profile's cluster is currently running and shows `kubectl get nodes -o wide` and `get pods -A` against it |
+| `make status PROFILE=x`       | Same, against that specific profile's context (errors clearly if it isn't up) |
 
 `PROFILE` defaults to `default` if omitted.
 
