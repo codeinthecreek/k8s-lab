@@ -1,0 +1,18 @@
+# Deliberately allocates more memory (150M) than its limit (100Mi) to
+# trigger a real OOMKill. requests < limits gives QoS class Burstable.
+# See docs/tutorial/06-scheduling.md.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: scheduling-demo-oom-pod
+spec:
+  containers:
+  - name: stress
+    image: polinux/stress
+    resources:
+      requests:
+        memory: "50Mi"
+      limits:
+        memory: "100Mi"
+    command: ["stress"]
+    args: ["--vm", "1", "--vm-bytes", "150M", "--vm-hang", "1"]

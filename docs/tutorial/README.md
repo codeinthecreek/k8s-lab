@@ -26,7 +26,7 @@ DESIGN.md.
 | 3 | [Pods and workloads](03-workloads.md) | Pod as the atomic unit, then ReplicaSet -> Deployment, rolling updates, why you almost never create a bare Pod. Includes a "workloads that run to completion" subsection on Job and CronJob. | verified against live cluster |
 | 4 | [Configuration and storage](04-config-storage.md) | ConfigMaps/Secrets, Volumes, PV/PVC static binding, StorageClass. Placed after workloads - none of this means anything without a Pod to attach it to. | verified against live cluster |
 | 5 | [Services and networking](05-services-networking.md) | ClusterIP/NodePort/LoadBalancer, CoreDNS service discovery, Ingress as L7 routing on top of Services. | verified against live cluster |
-| 6 | [Scheduling and resource management](06-scheduling.md) | Labels/selectors, node affinity, taints/tolerations, resource requests/limits. | not started |
+| 6 | [Scheduling and resource management](06-scheduling.md) | Labels/selectors, node affinity, taints/tolerations, resource requests/limits. | verified against live cluster |
 | 7 | [Package management with Helm](07-helm.md) | Templating/release management for patterns already taught in chapters 3-6. Deliberately not covered earlier. | not started |
 | 8 | [Security](08-security.md) | ServiceAccounts, RBAC, admission control, NetworkPolicy. NetworkPolicy depends on chapter 5's networking model and flags the CNI-enforcement caveat explicitly (kindnet doesn't enforce it, Calico does). | not started |
 | 9 | [Observability and troubleshooting](09-observability.md) | Logs, `kubectl debug`/ephemeral containers, metrics-server, common failure-mode diagnosis. Placed late so the reader has enough vocabulary from prior chapters to interpret what's broken. | not started |

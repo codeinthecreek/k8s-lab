@@ -1,0 +1,19 @@
+# Requires a node label value that matches no node in the cluster - a
+# deliberate failure mode. See docs/tutorial/06-scheduling.md.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: scheduling-demo-affinity-impossible-pod
+spec:
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: scheduling-demo/zone
+            operator: In
+            values:
+            - zone-that-does-not-exist
+  containers:
+  - name: nginx
+    image: nginx:1.27

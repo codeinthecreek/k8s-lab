@@ -1,0 +1,14 @@
+# A bare Pod (see chapter 3) with no toleration, pinned via nodeSelector
+# to the node labeled scheduling-demo/zone=zone-a. Applied BEFORE that
+# node is tainted, to demonstrate NoExecute evicting an already-running
+# Pod. See docs/tutorial/06-scheduling.md.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: scheduling-demo-notoleration-pod
+spec:
+  nodeSelector:
+    scheduling-demo/zone: zone-a
+  containers:
+  - name: nginx
+    image: nginx:1.27

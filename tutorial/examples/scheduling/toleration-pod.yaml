@@ -1,0 +1,19 @@
+# Tolerates the scheduling-demo=maintenance:NoExecute taint and is
+# pinned to the same tainted node - applied AFTER the taint exists, to
+# show it schedules and stays despite the taint. See
+# docs/tutorial/06-scheduling.md.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: scheduling-demo-toleration-pod
+spec:
+  nodeSelector:
+    scheduling-demo/zone: zone-a
+  tolerations:
+  - key: scheduling-demo
+    operator: Equal
+    value: maintenance
+    effect: NoExecute
+  containers:
+  - name: nginx
+    image: nginx:1.27

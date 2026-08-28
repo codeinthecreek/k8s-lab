@@ -1,0 +1,19 @@
+# Requires the node label scheduling-demo/zone=zone-a (applied by hand
+# before this is applied - see docs/tutorial/06-scheduling.md).
+apiVersion: v1
+kind: Pod
+metadata:
+  name: scheduling-demo-affinity-pod
+spec:
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: scheduling-demo/zone
+            operator: In
+            values:
+            - zone-a
+  containers:
+  - name: nginx
+    image: nginx:1.27
