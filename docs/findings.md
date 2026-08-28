@@ -4,6 +4,46 @@ Running log of problems hit while building/operating this lab and what
 fixed them. Newest entries at the top. Not a changelog of features -
 `git log` covers that. This is for things that cost time figuring out.
 
+## 2026-08-28 - kindnetd now enforces NetworkPolicy - "kindnet doesn't enforce it" is no longer a safe assumption
+
+While writing the tutorial's security chapter (`docs/tutorial/08-security.md`),
+applied a NetworkPolicy on the `default` profile expecting kindnetd to
+silently ignore it (the API accepts a NetworkPolicy object regardless of
+whether any CNI enforces it - only genuinely testing traffic proves
+anything either way). A Pod deliberately excluded by the policy's
+`podSelector` was actually blocked - real, reproducible enforcement, not a
+fluke: toggled the policy off/on twice against the same two Pods and got
+consistent allow/block results both times.
+
+This directly contradicted this repo's own `DESIGN.md`, which stated
+kindnetd doesn't enforce NetworkPolicy as the reason the `calico` profile
+exists. Confirmed the actual mechanism via kindnet's own pod logs on
+`default`:
+
+```
+kubectl logs -n kube-system <a-kindnet-pod> | grep -i "network-polic"
+"Starting controller" name="kube-network-policies"
+"Policy engine is ready."
+"Syncing nftables rules" logger="nftables-sync"
+```
+
+kindnetd has gained an embedded, nftables-based enforcer (the
+upstream `kube-network-policies` project) at some point since this repo's
+"kindnetd doesn't enforce NetworkPolicy" reasoning was written - the node
+image is digest-pinned (`kindest/node:v1.36.1`) and hasn't changed, so
+this is real upstream drift baked into that pinned image's bundled
+kindnetd, not a fluke of this specific test run or a locally-cached image
+mismatch (`imagePullPolicy: IfNotPresent`, image build date confirmed via
+`crictl inspecti` as `2026-05-28`, well before this was first hit).
+
+Lesson: don't assume a CNI's NetworkPolicy support (or lack of it) without
+checking `kubectl logs` on its node-agent Pods, or better, an actual
+allow/block test with two real Pods - "kindnetd is minimal and doesn't do
+NetworkPolicy" was accurate for a long time and still appears in plenty of
+current material, but it stopped being true for this repo's pinned image
+without any change on this repo's side. See `DESIGN.md`'s "kindnetd stays
+the default CNI" section for the corrected reasoning.
+
 ## 2026-08-24 - ImagePullBackOff on kube-webhook-certgen was a host DNS problem, not a manifest problem
 
 While restoring the vendored ingress-nginx manifest after a Helm-based

@@ -1,9 +1,12 @@
 # Calico v3.32.1 - applied by kind/profiles/calico/manifests.txt (first
-# line, before ingress-nginx/metrics-server) so that profile can test and
-# demonstrate NetworkPolicy enforcement. That profile sets
+# line, before ingress-nginx/metrics-server). That profile sets
 # disableDefaultCNI: true in its cluster.yaml in place of relying on
-# kindnetd. See DESIGN.md for the swap-in steps this followed. Fetched
-# verbatim from:
+# kindnetd. Originally added to test/demonstrate NetworkPolicy
+# enforcement (kindnetd didn't enforce it at the time); kindnetd on
+# current pinned node images enforces it too now - see DESIGN.md's
+# "kindnetd stays the default CNI" section for the corrected reasoning
+# and what this profile is still for. See DESIGN.md for the swap-in
+# steps this followed. Fetched verbatim from:
 # https://raw.githubusercontent.com/projectcalico/calico/v3.32.1/manifests/calico.yaml
 # License: Apache-2.0 (unmodified upstream content; this repo's own
 # BSD-3-Clause LICENSE does not apply to this file).

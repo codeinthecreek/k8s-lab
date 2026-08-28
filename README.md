@@ -153,7 +153,7 @@ Available profiles:
 |--------------------|----------------------------------|-------|
 | `default`          | 1 control-plane + 2 workers      | kindnetd CNI |
 | `ha-control-plane`  | 3 control-plane + 2 workers      | kindnetd CNI; Envoy load-balances the 3 apiservers |
-| `calico`            | 1 control-plane + 2 workers      | Calico CNI (kindnetd disabled); enforces NetworkPolicy, unlike kindnetd |
+| `calico`            | 1 control-plane + 2 workers      | Calico CNI (kindnetd disabled); alternative CNI demo - kindnetd on current node images also enforces NetworkPolicy, see DESIGN.md |
 
 Run `make list-profiles` to list them from the filesystem directly.
 

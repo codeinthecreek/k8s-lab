@@ -1,0 +1,12 @@
+# The Pod the NetworkPolicy example protects. See
+# docs/tutorial/08-security.md.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: security-demo-target
+  labels:
+    app: security-demo-target
+spec:
+  containers:
+  - name: nginx
+    image: nginx:1.27

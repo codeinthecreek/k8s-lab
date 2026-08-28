@@ -1,0 +1,13 @@
+# Labeled to match the NetworkPolicy's allowed ingress source. See
+# docs/tutorial/08-security.md.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: security-demo-client-allowed
+  labels:
+    role: frontend
+spec:
+  containers:
+  - name: busybox
+    image: busybox:1.36
+    command: ["sh", "-c", "sleep 3600"]

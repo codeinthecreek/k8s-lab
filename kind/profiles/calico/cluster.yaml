@@ -1,10 +1,14 @@
 # calico profile: 1 control-plane + 2 workers, same topology as default but
 # with kindnetd disabled in favor of Calico (manifests/cni/calico.yaml,
-# v3.32.1). Exists to test and demonstrate NetworkPolicy enforcement -
-# kindnetd does not enforce NetworkPolicy at all, so a real policy-enforcing
-# CNI is required here. See DESIGN.md's "kindnetd stays the default CNI on
-# default and ha-control-plane" section for the swap-in steps this profile
-# follows.
+# v3.32.1). Originally built to test and demonstrate NetworkPolicy
+# enforcement, back when kindnetd didn't enforce it at all. As of the
+# node image pinned below, kindnetd now enforces NetworkPolicy too (see
+# DESIGN.md's "kindnetd stays the default CNI" section, "Correction
+# (2026-08-28)") - this profile is kept as an alternative CNI demo (real
+# CNI swap, Calico's own IPAM/health-check behavior, and a fallback for
+# older/different node images), not as the only way to test NetworkPolicy
+# here. See DESIGN.md's "kindnetd stays the default CNI on default and
+# ha-control-plane" section for the swap-in steps this profile follows.
 #
 # podSubnet is deliberately left unset here, same as default and
 # ha-control-plane. manifests/cni/calico.yaml has no CALICO_IPV4POOL_CIDR
@@ -30,9 +34,11 @@ kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
 
 networking:
-  # kindnetd does not enforce NetworkPolicy - that's the whole reason this
-  # profile exists. manifests/cni/calico.yaml is applied first in
-  # manifests.txt to take its place.
+  # kindnetd on this pinned node image now enforces NetworkPolicy too (see
+  # the header comment above) - Calico is still swapped in here as an
+  # alternative CNI demo, not because it's the only enforcing option.
+  # manifests/cni/calico.yaml is applied first in manifests.txt to take
+  # kindnetd's place.
   disableDefaultCNI: true
 
 nodes:

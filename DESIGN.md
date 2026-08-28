@@ -99,10 +99,35 @@ than something you'd have to know kind's default to notice.
 `kind/profiles/calico/` swaps kindnetd for Calico (`manifests/cni/calico.yaml`,
 v3.32.1, fetched verbatim from
 `https://raw.githubusercontent.com/projectcalico/calico/v3.32.1/manifests/calico.yaml`)
-because kindnetd does not enforce NetworkPolicy - it's needed to test and
-demonstrate real NetworkPolicy enforcement. It was added by following the
-same mechanical steps documented here, in case another CNI-swapped profile
-is needed later:
+because kindnetd did not enforce NetworkPolicy - it was needed at the
+time to test and demonstrate real NetworkPolicy enforcement at all. That
+was the correct call when this profile was built, on the node image
+pinned then.
+
+**Correction (2026-08-28):** that reasoning is now out of date, not
+wrong for its time. kindnetd on `kindest/node:v1.36.1` and later
+enforces NetworkPolicy via an embedded, nftables-based
+`kube-network-policies` controller - verified live on the `default`
+profile: a NetworkPolicy that should block cross-Pod traffic genuinely
+blocked it, and kindnet's own pod logs show `"Starting controller"
+name="kube-network-policies"` and `"Policy engine is ready."` (see
+`docs/tutorial/08-security.md` and `docs/findings.md`'s 2026-08-28 entry
+for how this was found). This was not always true, and most current
+material - including Kubernetes' own docs pages - still states kindnetd
+doesn't enforce NetworkPolicy, because they haven't caught up to it
+either. **If reusing an older or different node image, re-verify** by
+checking kindnet's pod logs for that `kube-network-policies` controller
+line before assuming either way.
+
+Given that, `calico` is kept for a narrower set of reasons than
+originally stated: (a) demonstrating a real CNI swap mechanically, not
+tied to NetworkPolicy specifically; (b) Calico's own behavior - IPAM,
+`IPPool` resources, its health-check model - is independently worth
+having a live example of; (c) a fallback for anyone pinning an older or
+different node image where kindnet's enforcement isn't present. It is
+no longer "the only way to test NetworkPolicy here." It was added by
+following the same mechanical steps documented here, in case another
+CNI-swapped profile is needed later:
 
 1. `cp -r kind/profiles/default kind/profiles/calico`
 2. In `kind/profiles/calico/cluster.yaml`, flip `disableDefaultCNI: false`

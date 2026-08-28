@@ -1,0 +1,14 @@
+# Violates the "restricted" Pod Security Standard (privileged: true) -
+# rejected at admission before it's ever stored. See
+# docs/tutorial/08-security.md.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: security-demo-privileged-pod
+  namespace: security-demo-restricted
+spec:
+  containers:
+  - name: nginx
+    image: nginx:1.27
+    securityContext:
+      privileged: true

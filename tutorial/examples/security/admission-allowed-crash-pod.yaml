@@ -1,0 +1,22 @@
+# Satisfies every "restricted" requirement (runAsNonRoot, no privilege
+# escalation, all capabilities dropped, RuntimeDefault seccomp) so
+# admission accepts it - but the stock nginx image expects root and
+# crash-loops anyway. See docs/tutorial/08-security.md.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: security-demo-restricted-compliant-pod
+  namespace: security-demo-restricted
+spec:
+  containers:
+  - name: nginx
+    image: nginx:1.27
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 1000
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+        - ALL
+      seccompProfile:
+        type: RuntimeDefault
