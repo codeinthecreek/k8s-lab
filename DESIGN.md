@@ -238,3 +238,44 @@ can point at different image content across kind versions/builds - so the
 digest is the actual pin. When bumping this, update the digest in both
 profiles' `cluster.yaml` in the same commit so they never silently diverge
 onto different node images.
+
+## Tutorial content: structure and conventions
+
+`docs/tutorial/` holds a from-scratch, concept-first Kubernetes tutorial -
+independent of any course material, aimed at anyone with `kind` and
+`kubectl` installed, not just this repo's maintainer. See
+`docs/tutorial/README.md` for the chapter list and scope.
+
+**Chapter order follows concept dependency, not an exam's domain list or
+a course's lesson order.** A CKA domain breakdown or a course syllabus is
+organized for assessment or curriculum-delivery reasons that don't track
+what actually needs to be understood first. Storage, for instance, only
+makes sense once a Pod exists to mount something into - so storage comes
+after workloads here regardless of where any exam blueprint files it.
+
+**Examples live under `tutorial/examples/<topic>/*.yaml`, referenced by
+path from the prose, never pasted inline.** Same reasoning as the
+profile/manifest split above: an example a reader can't independently
+`kubectl apply -f` and diff against the doc's claimed output is just
+prose wearing YAML syntax. Keeping them as real files also means they can
+be linted/applied in CI later without scraping markdown.
+
+**Each concept section follows why, then example, then expected
+output/errors, in that order.** The failure mode this avoids: leading
+with YAML trains a reader to pattern-match manifests without
+understanding what problem the fields solve, which is exactly the
+exam-prep checklist style this tutorial is deliberately not.
+
+**Version-current framing.** Every chapter states what's true for the
+Kubernetes version this repo's `kind` profiles currently pin (see "Node
+image pinning" above), not as a timeless fact. Anything that changed
+recently or is likely to change again gets flagged inline (e.g. "as of
+1.24, ..."), the same way this document already flags e.g. Envoy
+replacing HAProxy as kind's load balancer. A tutorial that states
+version-specific behavior as eternal truth is how stale material like
+"Initializers" outlives its own removal by years.
+
+**No exam-prep artifacts.** No domain-percentage tables, no practice
+questions, no "exam tip" callouts. If a concept is CKA-relevant, it's
+included because it's a concept a working admin needs, not because a
+blueprint says so.
