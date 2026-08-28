@@ -1,0 +1,19 @@
+# Static binding: a hand-created PersistentVolume pointing at the real
+# NFS server in lab-helpers/nfs-server/ (`make nfs-up` first). fsid=0 on
+# that export means the mount path is "/", not "/nfsshare" - see
+# lab-helpers/nfs-server/README.md. storageClassName: "" (explicit empty
+# string, not omitted) is what makes this static rather than dynamic -
+# see docs/tutorial/04-config-storage.md.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: config-storage-demo-nfs-pv
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ""
+  nfs:
+    server: k8s-lab-nfs-server
+    path: /

@@ -1,0 +1,13 @@
+# Deliberately OMITS storageClassName (not the same as setting it to
+# "") to demonstrate the DefaultStorageClass admission controller - see
+# docs/tutorial/04-config-storage.md.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: config-storage-demo-omitted-scn-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

@@ -1,0 +1,21 @@
+# Consumes config-storage-demo-rwx-pvc - needed to actually trigger
+# local-path-provisioner's ReadWriteMany rejection, since the default
+# StorageClass uses volumeBindingMode: WaitForFirstConsumer (nothing is
+# attempted until a Pod references the PVC). See
+# docs/tutorial/04-config-storage.md.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: config-storage-demo-rwx-pod
+spec:
+  containers:
+  - name: app
+    image: busybox:1.36
+    command: ["sh", "-c", "sleep 3600"]
+    volumeMounts:
+    - name: vol
+      mountPath: /mnt/data
+  volumes:
+  - name: vol
+    persistentVolumeClaim:
+      claimName: config-storage-demo-rwx-pvc

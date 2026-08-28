@@ -1,0 +1,15 @@
+# Binds statically to config-storage-demo-nfs-pv - storageClassName: ""
+# (explicit) is required, an omitted field would instead trigger dynamic
+# provisioning via the default StorageClass. See
+# docs/tutorial/04-config-storage.md.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: config-storage-demo-nfs-pvc
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ""
+  resources:
+    requests:
+      storage: 1Gi

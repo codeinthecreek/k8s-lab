@@ -1,0 +1,12 @@
+# See docs/tutorial/04-config-storage.md - `motd` is deliberately
+# multi-line to demonstrate the env-var-vs-volume-mount consumption
+# difference.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: config-storage-demo-cm
+data:
+  greeting: "Hello from a ConfigMap"
+  motd: |
+    Line one of the message of the day.
+    Line two of the message of the day.
