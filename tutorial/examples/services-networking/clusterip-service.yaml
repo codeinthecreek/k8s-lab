@@ -1,0 +1,12 @@
+# The default Service type - stable virtual IP, cluster-internal only.
+# See docs/tutorial/05-services-networking.md.
+apiVersion: v1
+kind: Service
+metadata:
+  name: services-demo-clusterip
+spec:
+  selector:
+    app: services-demo
+  ports:
+  - port: 80
+    targetPort: 80

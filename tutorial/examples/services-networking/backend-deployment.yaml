@@ -1,0 +1,21 @@
+# Backend workload the Service examples in this directory all target.
+# See docs/tutorial/05-services-networking.md.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: services-demo-backend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: services-demo
+  template:
+    metadata:
+      labels:
+        app: services-demo
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.27
+        ports:
+        - containerPort: 80

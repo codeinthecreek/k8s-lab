@@ -1,0 +1,21 @@
+# L7 routing to the ClusterIP Service, through this repo's own
+# ingress-nginx (manifests/ingress/ingress-nginx.yaml, applied by the
+# default profile's manifests.txt). ingressClassName: nginx matches the
+# IngressClass that manifest creates. See
+# docs/tutorial/05-services-networking.md.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: services-demo-ingress
+spec:
+  ingressClassName: nginx
+  rules:
+  - http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: services-demo-clusterip
+            port:
+              number: 80

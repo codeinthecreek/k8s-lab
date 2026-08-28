@@ -1,0 +1,14 @@
+# Requests a cloud load balancer - kind has no cloud provider to grant
+# one, so EXTERNAL-IP stays <pending> indefinitely. See
+# docs/tutorial/05-services-networking.md.
+apiVersion: v1
+kind: Service
+metadata:
+  name: services-demo-loadbalancer
+spec:
+  type: LoadBalancer
+  selector:
+    app: services-demo
+  ports:
+  - port: 80
+    targetPort: 80
