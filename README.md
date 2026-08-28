@@ -168,16 +168,38 @@ Run `make list-profiles` to list them from the filesystem directly.
 | `make kubeconfig PROFILE=x`   | `kind export kubeconfig` for that profile | Uses `default` |
 | `make status PROFILE=x`       | `kubectl get nodes -o wide` and `get pods -A` against that profile's context (errors clearly if it isn't up) | Auto-detects whichever profile's cluster is currently running |
 
+## Tutorial
+
+`docs/tutorial/` is a from-scratch, concept-first Kubernetes tutorial
+written directly against this repo rather than alongside it: every
+example is a real manifest under `tutorial/examples/`, applied to one of
+this repo's profiles (`default`, `ha-control-plane`, or `calico`) and
+verified against real cluster output before being written up.
+
+Chapters run in concept-dependency order - architecture and the API
+model first, then workloads, configuration/storage, networking,
+scheduling, Helm, security, observability, CRDs, and finally
+multi-control-plane HA as the capstone chapter. Each concept section
+follows the same shape: why the feature exists, a runnable example, then
+real expected output, including at least one instructive failure mode
+where there is one.
+
+See [docs/tutorial/README.md](docs/tutorial/README.md) for the full
+chapter list, per-chapter scope, and verification status, and DESIGN.md's
+"Tutorial content: structure and conventions" section for the reasoning
+behind how it's structured.
+
 ## Lab helpers
 
-`lab-helpers/` holds infrastructure that supports working through specific
-lab exercises, not the reproducible lab itself - it's never referenced
-from a profile's `manifests.txt` and never touched by `make
-up`/`down`/`reset`.
+`lab-helpers/` holds infrastructure that supports working through this
+repo's own material but isn't itself part of the reproducible lab - it's
+never referenced from a profile's `manifests.txt` and never touched by
+`make up`/`down`/`reset`.
 
 `lab-helpers/nfs-server/` is a real NFS server (container, on the `kind`
-Docker network) for a PersistentVolume/PersistentVolumeClaim lab
-exercise. See
+Docker network), used by the tutorial's storage chapter
+([docs/tutorial/04-config-storage.md](docs/tutorial/04-config-storage.md))
+for its PersistentVolume/PersistentVolumeClaim examples. See
 [lab-helpers/nfs-server/README.md](lab-helpers/nfs-server/README.md) for
 usage and a load-bearing gotcha (the export's `fsid=0` means clients mount
 at path `/`, not `/nfsshare`).
@@ -217,6 +239,7 @@ worked example (adding a `calico` profile using the already-staged
 DESIGN.md                      architecture decisions and rationale
 docs/findings.md                running log of issues hit and fixes
 docs/testing.md                 manual verification commands
+docs/tutorial/                  from-scratch Kubernetes tutorial (see docs/tutorial/README.md)
 kind/profiles/<name>/
   cluster.yaml                  kind cluster config for this profile
   manifests.txt                 ordered list of manifest paths to apply

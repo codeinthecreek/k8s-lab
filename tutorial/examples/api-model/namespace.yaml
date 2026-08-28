@@ -1,0 +1,6 @@
+# Minimal object for demonstrating the API's standard envelope:
+# apiVersion, kind, metadata, spec (see docs/tutorial/02-api-model.md).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tutorial-api-model

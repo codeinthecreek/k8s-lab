@@ -1,0 +1,9 @@
+# Same object as namespace.yaml, with a label added - apply this after
+# namespace.yaml to see kubectl apply patch an existing object rather
+# than recreate it (see docs/tutorial/02-api-model.md).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: tutorial-api-model
+  labels:
+    tutorial.example/stage: relabeled
