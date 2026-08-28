@@ -1,0 +1,14 @@
+# A bare Pod - no controller behind it. See docs/tutorial/03-workloads.md
+# for why this is almost never what you actually want to create directly.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: workloads-demo-pod
+  labels:
+    app: workloads-demo
+spec:
+  containers:
+  - name: nginx
+    image: nginx:1.27
+    ports:
+    - containerPort: 80

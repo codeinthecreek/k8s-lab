@@ -1,0 +1,19 @@
+# See docs/tutorial/03-workloads.md - a ReplicaSet's identity is its
+# spec.selector, not any ownership metadata on the Pods it manages.
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: workloads-demo-rs
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: workloads-demo-rs
+  template:
+    metadata:
+      labels:
+        app: workloads-demo-rs
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.27

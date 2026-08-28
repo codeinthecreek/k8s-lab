@@ -23,7 +23,7 @@ DESIGN.md.
 |---|-------|-------|--------|
 | 1 | [Cluster architecture](01-architecture.md) | Control plane / worker split, what each component does, how kind's node-as-container model maps onto it. No YAML - conceptual foundation only. | verified against live cluster |
 | 2 | [The API model](02-api-model.md) | Declarative desired-state model, apiVersion/kind/metadata/spec, kubectl as an API client, what `apply` actually does (diff + PATCH, not blind create). First chapter with a YAML example. | verified against live cluster |
-| 3 | [Pods and workloads](03-workloads.md) | Pod as the atomic unit, then ReplicaSet -> Deployment, rolling updates, why you almost never create a bare Pod. Includes a "workloads that run to completion" subsection on Job and CronJob. | not started |
+| 3 | [Pods and workloads](03-workloads.md) | Pod as the atomic unit, then ReplicaSet -> Deployment, rolling updates, why you almost never create a bare Pod. Includes a "workloads that run to completion" subsection on Job and CronJob. | verified against live cluster |
 | 4 | [Configuration and storage](04-config-storage.md) | ConfigMaps/Secrets, Volumes, PV/PVC static binding, StorageClass. Placed after workloads - none of this means anything without a Pod to attach it to. | not started |
 | 5 | [Services and networking](05-services-networking.md) | ClusterIP/NodePort/LoadBalancer, CoreDNS service discovery, Ingress as L7 routing on top of Services. | not started |
 | 6 | [Scheduling and resource management](06-scheduling.md) | Labels/selectors, node affinity, taints/tolerations, resource requests/limits. | not started |

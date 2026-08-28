@@ -1,0 +1,21 @@
+# Schedules Job objects on a cron schedule - see
+# docs/tutorial/03-workloads.md's "workloads that run to completion"
+# subsection. History limits kept low deliberately so rotation is
+# observable within a few runs rather than the defaults (3/1).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: workloads-demo-cronjob
+spec:
+  schedule: "* * * * *"
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: hello
+            image: busybox:1.36
+            command: ["sh", "-c", "date; echo Hello from the CronJob"]

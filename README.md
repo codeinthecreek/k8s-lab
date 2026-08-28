@@ -82,7 +82,7 @@ Key relationships this makes explicit:
   network. Since 80/443 are fixed host ports named explicitly in each
   profile's `cluster.yaml` (unlike the auto-assigned apiserver port),
   ingress is what actually blocks two ingress-enabled profiles from running
-  at once - see the port-conflict note below and `docs/findings.md`.
+  at once - see the port-conflict note below and [docs/findings.md](docs/findings.md).
 - **Ingress traffic makes two hops**: host port -> node container's
   hostPort -> Service/Pod - worth remembering when debugging a 502 that
   "should" be a simple Service issue.
@@ -185,7 +185,7 @@ real expected output, including at least one instructive failure mode
 where there is one.
 
 See [docs/tutorial/README.md](docs/tutorial/README.md) for the full
-chapter list, per-chapter scope, and verification status, and DESIGN.md's
+chapter list, per-chapter scope, and verification status, and [DESIGN.md](DESIGN.md)'s
 "Tutorial content: structure and conventions" section for the reasoning
 behind how it's structured.
 
@@ -229,7 +229,7 @@ No code changes needed - the Makefile and manifests are profile-agnostic.
    or nodes will stay `NotReady` and nothing else will schedule.
 4. `make up PROFILE=<new-name>`.
 
-See DESIGN.md's "kindnetd stays the default CNI" section for a concrete
+See [DESIGN.md](DESIGN.md)'s "kindnetd stays the default CNI" section for a concrete
 worked example (adding a `calico` profile using the already-staged
 `manifests/cni/calico.yaml`).
 

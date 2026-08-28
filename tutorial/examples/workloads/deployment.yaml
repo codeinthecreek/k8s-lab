@@ -1,0 +1,19 @@
+# See docs/tutorial/03-workloads.md - a Deployment manages ReplicaSets
+# the way a ReplicaSet manages Pods, one layer up, to get rolling updates.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: workloads-demo-deploy
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: workloads-demo-deploy
+  template:
+    metadata:
+      labels:
+        app: workloads-demo-deploy
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.27
