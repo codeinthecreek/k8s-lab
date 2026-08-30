@@ -5,9 +5,11 @@ sensible without saying anything about it. This chapter makes that
 placement decision itself the subject: the same label/selector mechanism
 already used for ReplicaSets (chapter 3) and Services (chapter 5),
 applied to nodes; the two ways to influence where a Pod can and can't
-land (affinity, taints/tolerations); and the resource requests/limits
-that shape *how much* of a node a Pod is allowed to consume once it's
-there.
+land (affinity, taints/tolerations); the resource requests/limits that
+shape *how much* of a node a Pod is allowed to consume once it's there;
+and, closing the loop from a single Pod to an entire namespace,
+ResourceQuota and LimitRange - the mechanism that turns a namespace from
+a bare naming scope into an actual resource boundary.
 
 ### Labels and selectors: one mechanism, used everywhere
 
@@ -261,3 +263,125 @@ OOM killer, not something the process could catch or clean up after.
 Unlike the CPU case, there's no throttling option for memory: once a
 cgroup hits its hard limit, the kernel has to reclaim the memory by
 force, and the only way to do that to a process is to kill it.
+
+### ResourceQuota: capping aggregate consumption per namespace
+
+**Why**: everything in the previous section is per-Pod and voluntary -
+nothing stops a namespace from accumulating an unbounded number of
+Pods, or Pods with arbitrarily large requests/limits, until the
+*node's* real capacity runs out. ResourceQuota caps totals across an
+entire namespace instead - aggregate `requests.cpu`/`requests.memory`,
+aggregate `limits.cpu`/`limits.memory`, object counts like `pods` - and
+it has a second, easy-to-miss effect: once a ResourceQuota constrains a
+compute resource (`limits.cpu`/`limits.memory` here), the apiserver
+requires *every* Pod created in that namespace to explicitly declare
+that resource, rejecting any Pod that doesn't, even one that would
+easily fit within the remaining quota.
+
+**Example**: `tutorial/examples/scheduling/governance-namespace.yaml`
+and `tutorial/examples/scheduling/resourcequota.yaml` (hard caps:
+`requests.cpu: 500m`, `requests.memory: 256Mi`, `limits.cpu: 1`,
+`limits.memory: 512Mi`, `pods: 3`), then two Pods that each fail for a
+different reason:
+
+```
+kubectl apply -f tutorial/examples/scheduling/governance-namespace.yaml
+kubectl apply -f tutorial/examples/scheduling/resourcequota.yaml
+kubectl apply -f tutorial/examples/scheduling/quota-noresources-pod.yaml
+kubectl apply -f tutorial/examples/scheduling/quota-exceeding-pod.yaml
+kubectl describe resourcequota scheduling-demo-quota -n scheduling-demo-governance
+```
+
+**Expected output**: both Pods rejected outright, before either is ever
+stored - but for two distinguishable reasons, worth seeing verbatim
+rather than assuming they'd look the same:
+
+```
+$ kubectl apply -f tutorial/examples/scheduling/quota-noresources-pod.yaml
+Error from server (Forbidden): error when creating "tutorial/examples/scheduling/quota-noresources-pod.yaml": pods "scheduling-demo-noresources-pod" is forbidden: failed quota: scheduling-demo-quota: must specify limits.cpu for: nginx; limits.memory for: nginx; requests.cpu for: nginx; requests.memory for: nginx
+```
+
+That one lists exactly which fields are missing - nothing about
+capacity, purely "you didn't declare this." The exceeding Pod, which
+*does* declare everything, fails on the numbers instead:
+
+```
+$ kubectl apply -f tutorial/examples/scheduling/quota-exceeding-pod.yaml
+Error from server (Forbidden): error when creating "tutorial/examples/scheduling/quota-exceeding-pod.yaml": pods "scheduling-demo-exceeding-pod" is forbidden: exceeded quota: scheduling-demo-quota, requested: limits.memory=600Mi,requests.memory=300Mi, used: limits.memory=0,requests.memory=0, limited: limits.memory=512Mi,requests.memory=256Mi
+```
+
+`requested`/`used`/`limited` spelled out explicitly - this Pod alone
+would have pushed `limits.memory` to 600Mi against a 512Mi hard cap.
+Since both applies were rejected, nothing was ever actually created:
+
+```
+$ kubectl describe resourcequota scheduling-demo-quota -n scheduling-demo-governance
+Name:            scheduling-demo-quota
+Namespace:       scheduling-demo-governance
+Resource         Used  Hard
+--------         ----  ----
+limits.cpu       0     1
+limits.memory    0     512Mi
+pods             0     3
+requests.cpu     0     500m
+requests.memory  0     256Mi
+```
+
+### LimitRange: defaults so Pods don't have to specify resources every time
+
+**Why**: the previous section's first rejection is exactly what
+LimitRange resolves - it sets a `default` (limits) and `defaultRequest`
+(requests) that get injected into any container in the namespace that
+doesn't specify its own, and can additionally enforce per-container
+min/max bounds. Once a LimitRange exists, a Pod that mentions no
+resources at all - the same one ResourceQuota rejected above - gets
+the LimitRange's defaults filled in automatically at admission time and
+satisfies the quota's "must declare limits" requirement without ever
+mentioning resources itself.
+
+**Example**: `tutorial/examples/scheduling/limitrange.yaml` sets
+`default` (500m CPU / 256Mi memory) and `defaultRequest` (250m CPU /
+128Mi memory) for the namespace, then the exact same
+`quota-noresources-pod.yaml` that was rejected above is re-applied:
+
+```
+kubectl apply -f tutorial/examples/scheduling/limitrange.yaml
+kubectl apply -f tutorial/examples/scheduling/quota-noresources-pod.yaml
+kubectl get pod scheduling-demo-noresources-pod -n scheduling-demo-governance -o jsonpath='{.spec.containers[0].resources}'
+```
+
+**Expected output**: the exact same manifest that was rejected in the
+previous section now succeeds, with the LimitRange's `default`/
+`defaultRequest` values injected into the Pod spec even though the
+manifest itself never mentions `resources` at all:
+
+```
+$ kubectl apply -f tutorial/examples/scheduling/limitrange.yaml
+limitrange/scheduling-demo-limits created
+
+$ kubectl apply -f tutorial/examples/scheduling/quota-noresources-pod.yaml
+pod/scheduling-demo-noresources-pod created
+
+$ kubectl get pod scheduling-demo-noresources-pod -n scheduling-demo-governance -o jsonpath='{.spec.containers[0].resources}'
+{"limits":{"cpu":"500m","memory":"256Mi"},"requests":{"cpu":"250m","memory":"128Mi"}}
+```
+
+Exactly the LimitRange's `default` (500m/256Mi) and `defaultRequest`
+(250m/128Mi) values, admission-injected before the ResourceQuota check
+even ran - which is why the same Pod that failed the "must specify"
+check above now clears it automatically. The quota's own `Used` column
+confirms one Pod is now actually running, consuming exactly those
+defaulted amounts:
+
+```
+$ kubectl describe resourcequota scheduling-demo-quota -n scheduling-demo-governance
+Name:            scheduling-demo-quota
+Namespace:       scheduling-demo-governance
+Resource         Used   Hard
+--------         ----   ----
+limits.cpu       500m   1
+limits.memory    256Mi  512Mi
+pods             1      3
+requests.cpu     250m   500m
+requests.memory  128Mi  256Mi
+```

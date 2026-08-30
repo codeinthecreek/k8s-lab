@@ -1,0 +1,19 @@
+# Applies default (limits) and defaultRequest (requests) to any
+# container in the namespace that doesn't specify its own - this is
+# what lets quota-noresources-pod.yaml satisfy resourcequota.yaml's
+# requirement that every Pod declare limits, without the Pod's own
+# manifest mentioning resources at all.
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: scheduling-demo-limits
+  namespace: scheduling-demo-governance
+spec:
+  limits:
+  - type: Container
+    default:
+      cpu: "500m"
+      memory: "256Mi"
+    defaultRequest:
+      cpu: "250m"
+      memory: "128Mi"

@@ -1,0 +1,12 @@
+# No resources.requests/limits at all - apply this before
+# limitrange.yaml exists in the namespace to see it rejected, then
+# again afterward to see LimitRange's defaults let it through.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: scheduling-demo-noresources-pod
+  namespace: scheduling-demo-governance
+spec:
+  containers:
+  - name: nginx
+    image: nginx:1.27

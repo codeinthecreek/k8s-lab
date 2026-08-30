@@ -1,0 +1,7 @@
+# A dedicated namespace for the ResourceQuota/LimitRange examples -
+# both are namespace-scoped objects, so they need somewhere to live
+# that isn't the default namespace shared by every other chapter.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: scheduling-demo-governance

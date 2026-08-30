@@ -1,0 +1,15 @@
+# Caps aggregate consumption across every Pod in the namespace, not
+# any single Pod's own requests/limits (see resource-qos-pod.yaml
+# above, which is about one Pod's own shape).
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: scheduling-demo-quota
+  namespace: scheduling-demo-governance
+spec:
+  hard:
+    requests.cpu: "500m"
+    requests.memory: "256Mi"
+    limits.cpu: "1"
+    limits.memory: "512Mi"
+    pods: "3"
