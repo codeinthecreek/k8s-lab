@@ -473,3 +473,52 @@ a plain `nginx` version bump. The registry now holds both tags:
 $ curl -sS localhost:5001/v2/app-deployment-demo/tags/list
 {"name":"app-deployment-demo","tags":["v1","v2"]}
 ```
+
+### Teardown
+
+**Why**: unlike most of this tutorial's examples, this chapter leaves
+two different kinds of real state behind - Kubernetes objects on the
+cluster, and a Docker container (`k8s-lab-registry`) running on the
+host, independent of any cluster. The registry isn't optional lab
+scaffolding the way `lab-helpers/nfs-server` is for chapter 4 - it's a
+step in the actual deployment workflow this chapter walked through
+(build -> push -> deploy), which is exactly why it needs its own
+explicit teardown rather than disappearing along with a `kind delete
+cluster`.
+
+**Example**: delete the app's Kubernetes objects first, then stop the
+registry container:
+
+```
+kubectl delete -f tutorial/examples/app-deployment/ingress.yaml
+kubectl delete -f tutorial/examples/app-deployment/service.yaml
+kubectl delete -f tutorial/examples/app-deployment/deployment.yaml
+kubectl delete -f tutorial/examples/app-deployment/configmap.yaml
+kubectl get deploy,svc,ingress,cm -l app=app-deployment-demo
+make registry-down
+docker ps -a --filter name=k8s-lab-registry
+```
+
+**Expected output**: every object this chapter created is gone from the
+cluster, and the registry container is stopped and removed (its
+`lab-helpers/registry/data/` bind mount is left in place, so `v1` and
+`v2` are still there on the next `make registry-up`):
+
+```
+ingress.networking.k8s.io "app-deployment-demo" deleted from default namespace
+service "app-deployment-demo" deleted from default namespace
+deployment.apps "app-deployment-demo" deleted from default namespace
+configmap "app-deployment-demo-config" deleted from default namespace
+
+No resources found in default namespace.
+
+k8s-lab-registry removed (lab-helpers/registry/data left in place)
+
+CONTAINER ID   IMAGE     COMMAND   CREATED   STATUS    PORTS     NAMES
+```
+
+`make down PROFILE=default` (or whichever profile was used) still
+removes the cluster itself as usual - that part isn't different from any
+other chapter. What's different here is that stopping there would leave
+`k8s-lab-registry` running on the host indefinitely, since it was never
+tied to the cluster's own lifecycle in the first place.
