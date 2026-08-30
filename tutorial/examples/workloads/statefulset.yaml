@@ -1,0 +1,36 @@
+# 2 replicas, each with its own PersistentVolumeClaim from
+# volumeClaimTemplates (chapter 4's dynamic provisioning, one PVC per
+# ordinal rather than one shared PVC). Requires
+# statefulset-headless-service.yaml applied first.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: workloads-demo-sts
+spec:
+  serviceName: workloads-demo-sts
+  replicas: 2
+  selector:
+    matchLabels:
+      app: workloads-demo-sts
+  template:
+    metadata:
+      labels:
+        app: workloads-demo-sts
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.27
+        ports:
+        - containerPort: 80
+          name: web
+        volumeMounts:
+        - name: data
+          mountPath: /usr/share/nginx/html
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 100Mi

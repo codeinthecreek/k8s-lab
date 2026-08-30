@@ -1,0 +1,17 @@
+# A StatefulSet's spec.serviceName must name a headless Service
+# (clusterIP: None) with a selector matching the StatefulSet's Pods -
+# this is what gives each Pod a stable per-Pod DNS name, not just a
+# load-balanced Service VIP (chapter 5).
+apiVersion: v1
+kind: Service
+metadata:
+  name: workloads-demo-sts
+  labels:
+    app: workloads-demo-sts
+spec:
+  clusterIP: None
+  selector:
+    app: workloads-demo-sts
+  ports:
+  - port: 80
+    name: web
