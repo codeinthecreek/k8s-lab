@@ -1,0 +1,11 @@
+# A valid instance of the CronTab custom resource - same
+# apiVersion/kind/metadata/spec shape as any built-in object (see
+# chapter 2), just under a custom group instead of a core/apps one.
+apiVersion: example.com/v1
+kind: CronTab
+metadata:
+  name: tutorial-demo-crontab
+spec:
+  cronSpec: "* * * * */5"
+  image: my-cron-image
+  replicas: 3

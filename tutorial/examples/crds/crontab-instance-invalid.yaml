@@ -1,0 +1,12 @@
+# Same as crontab-instance.yaml, but replicas is a string instead of
+# an integer - violates the CRD's openAPIV3Schema (crontab-crd.yaml),
+# to confirm the schema is actually enforced on instances, not just
+# required at definition time.
+apiVersion: example.com/v1
+kind: CronTab
+metadata:
+  name: tutorial-demo-crontab-invalid
+spec:
+  cronSpec: "* * * * */5"
+  image: my-cron-image
+  replicas: "three"
