@@ -31,7 +31,7 @@ DESIGN.md.
 | 8 | [Security](08-security.md) | ServiceAccounts, RBAC, admission control, NetworkPolicy. NetworkPolicy depends on chapter 5's networking model and covers verifying CNI enforcement directly rather than assuming it (kindnetd on this repo's pinned node image and Calico both enforce it - see DESIGN.md). | verified against live cluster |
 | 9 | [Observability and troubleshooting](09-observability.md) | Logs, `kubectl debug`/ephemeral containers, metrics-server, common failure-mode diagnosis. Placed late so the reader has enough vocabulary from prior chapters to interpret what's broken. | verified against live cluster |
 | 10 | [Extending the API: CRDs](10-crds.md) | Custom resources and controllers as the mechanism the built-in objects (chapters 3-6) are themselves examples of. | verified against live cluster |
-| 11 | [High availability and cluster operations](11-high-availability.md) | Multi-control-plane topology, etcd quorum, load-balancer fronting, node-failure semantics. Capstone chapter. | verified against live cluster |
+| 11 | [High availability and cluster operations](11-high-availability.md) | Multi-control-plane topology, etcd quorum, load-balancer fronting, node-failure semantics, PodDisruptionBudgets, etcd backup/restore, and kubeadm cluster upgrades. Capstone chapter. | verified against live cluster |
 
 Status values: **not started** / **drafted** (written, examples not yet
 re-verified against a live cluster) / **verified against live cluster**
