@@ -171,10 +171,13 @@ Run `make list-profiles` to list them from the filesystem directly.
 ## Tutorial
 
 `docs/tutorial/` is a from-scratch, concept-first Kubernetes tutorial
-written directly against this repo rather than alongside it: every
-example is a real manifest under `tutorial/examples/`, applied to one of
-this repo's profiles (`default`, `ha-control-plane`, or `calico`) and
-verified against real cluster output before being written up.
+written directly against this repo rather than alongside it: manifest-
+driven chapters use real YAML under `tutorial/examples/`, applied to one
+of this repo's profiles (`default`, `ha-control-plane`, or `calico`);
+command/concept-driven chapters (architecture, Helm, observability, HA)
+work directly against a live cluster via `kubectl`/`docker` instead.
+Every example, manifest or command, is verified against real cluster
+output before being written up - nothing is written from memory.
 
 Chapters run in concept-dependency order - architecture and the API
 model first, then workloads, configuration/storage, networking,
@@ -240,6 +243,7 @@ DESIGN.md                      architecture decisions and rationale
 docs/findings.md                running log of issues hit and fixes
 docs/testing.md                 manual verification commands
 docs/tutorial/                  from-scratch Kubernetes tutorial (see docs/tutorial/README.md)
+tutorial/examples/<topic>/       manifests referenced by the tutorial's manifest-driven chapters
 kind/profiles/<name>/
   cluster.yaml                  kind cluster config for this profile
   manifests.txt                 ordered list of manifest paths to apply
