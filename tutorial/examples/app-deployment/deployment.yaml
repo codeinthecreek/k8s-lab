@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-deployment-demo
+  labels:
+    app: app-deployment-demo
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: app-deployment-demo
+  template:
+    metadata:
+      labels:
+        app: app-deployment-demo
+    spec:
+      containers:
+      - name: app
+        image: localhost:5001/app-deployment-demo:v1
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+        envFrom:
+        - configMapRef:
+            name: app-deployment-demo-config

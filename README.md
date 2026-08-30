@@ -181,11 +181,14 @@ output before being written up - nothing is written from memory.
 
 Chapters run in concept-dependency order - architecture and the API
 model first, then workloads, configuration/storage, networking,
-scheduling, Helm, security, observability, CRDs, and finally
-multi-control-plane HA as the capstone chapter. Each concept section
-follows the same shape: why the feature exists, a runnable example, then
-real expected output, including at least one instructive failure mode
-where there is one.
+scheduling, Helm, security, observability, CRDs, and multi-control-plane
+HA as the operator-perspective capstone. Chapter 12 closes the tutorial
+from the other direction - the developer-perspective seam the other
+chapters assume is already done: source code, a Dockerfile, and a local
+registry (`lab-helpers/registry`) on the way to a Deployment. Each
+concept section follows the same shape: why the feature exists, a
+runnable example, then real expected output, including at least one
+instructive failure mode where there is one.
 
 See [docs/tutorial/README.md](docs/tutorial/README.md) for the full
 chapter list, per-chapter scope, and verification status, and [DESIGN.md](DESIGN.md)'s
@@ -217,6 +220,27 @@ at path `/`, not `/nfsshare`).
 `nfs-client-install` must be re-run any time the target profile's nodes
 are recreated (`make reset`, or `down` then `up`) - node containers are
 ephemeral and don't retain packages installed into them after creation.
+
+`lab-helpers/registry/` is a real image registry (`registry:3` container,
+also on the `kind` Docker network), used by the tutorial's developer-
+journey chapter
+([docs/tutorial/12-app-deployment.md](docs/tutorial/12-app-deployment.md))
+to build/tag/push a self-built image the cluster can actually pull. See
+[lab-helpers/registry/README.md](lab-helpers/registry/README.md) - unlike
+`nfs-server`, using it requires a `cluster.yaml` change (a
+`containerdConfigPatches` block, present on all three profiles - see
+DESIGN.md's "Local registry: containerd config_path patch"), so it only
+works on clusters created after that change.
+
+| Target                                       | Does |
+|-----------------------------------------------|------|
+| `make registry-up`                            | Start the registry container (idempotent; profile-independent, doesn't require a kind cluster yet) |
+| `make registry-down`                          | Stop and remove it (`lab-helpers/registry/data/` persists) |
+| `make registry-status`                        | Show the container's status and list pushed repositories |
+| `make registry-client-install PROFILE=x`      | Wire up containerd on every node of that profile to pull from it, at `localhost:5001/<image>` |
+
+`registry-client-install` must be re-run any time the target profile's
+nodes are recreated, same reason as `nfs-client-install`.
 
 ## Adding a new profile
 

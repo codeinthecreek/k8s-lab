@@ -4,6 +4,72 @@ Running log of problems hit while building/operating this lab and what
 fixed them. Newest entries at the top. Not a changelog of features -
 `git log` covers that. This is for things that cost time figuring out.
 
+## 2026-08-30 - kind's "config_path patch not needed on kind v0.27.0+ images" doesn't hold for this repo's pinned image
+
+While building the tutorial's developer-journey chapter
+(`docs/tutorial/12-app-deployment.md`) around a real local registry
+(`lab-helpers/registry`), started from kind's own
+`kind-with-registry.sh` example, which includes a `containerdConfigPatches`
+block setting `[plugins."io.containerd.grpc.v1.cri".registry] config_path
+= "/etc/containerd/certs.d"` - with a comment saying it's "not necessary
+with images from kind v0.27.0+."
+
+Checked directly rather than trusting the comment: created a `default`
+profile cluster from this repo's existing `cluster.yaml` (no such patch at
+the time) and ran `docker exec <node> cat /etc/containerd/config.toml` on
+a live node. No `[plugins."io.containerd.grpc.v1.cri".registry]` block
+existed at all - `config_path` was unset, so a `hosts.toml` written under
+`/etc/containerd/certs.d/` would have been silently ignored. This repo's
+pinned node image is `kindest/node:v1.36.1`, built well after kind
+v0.27.0, so the "newer images don't need this" claim doesn't hold for it.
+
+Added the patch to all three profiles' `cluster.yaml` (see DESIGN.md's
+"Local registry: containerd config_path patch"), recreated the cluster,
+and confirmed `config_path` was present in `config.toml` afterward -
+registry pulls only started working once that was in place. Lesson: a
+"not necessary as of version X" claim in someone else's example script is
+a claim about *their* tested image, not a guarantee about any node image
+tagged after version X - verify against `/etc/containerd/config.toml` on
+an actual node rather than assuming the comment still applies.
+
+## 2026-08-30 - imagePullPolicy: Always fails outright against a `kind load docker-image`-only image, even though the bits are already on the node
+
+While demonstrating imagePullPolicy failure modes for the same chapter:
+built `app-deployment-demo:v1` locally, loaded it into the `default`
+profile with `kind load docker-image` (no registry involved), then ran a
+Pod referencing that image with `imagePullPolicy: Always`. Expected it to
+either work (image's already there) or behave like a plain "not found"
+- instead it failed with `ErrImagePull`/`ImagePullBackOff`:
+
+```
+Failed to pull image "app-deployment-demo:v1": failed to pull and unpack
+image "docker.io/library/app-deployment-demo:v1": failed to resolve
+reference "docker.io/library/app-deployment-demo:v1": pull access denied,
+repository does not exist or may require authorization: server message:
+insufficient_scope: authorization failed
+```
+
+`Always` doesn't fall back to an already-present local image if the
+registry check itself fails - and an unqualified image name defaults to
+`docker.io/library/<name>`, a real registry that has no idea this image
+exists, regardless of what `kind load docker-image` already put in
+containerd's local content store on every node. `IfNotPresent` against
+the identical locally-loaded image works fine (no pull attempted at all).
+This is exactly why `lab-helpers/registry` (a real registry the node
+actually pulls from) exists as this tutorial's answer for testing
+`imagePullPolicy: Always` against a self-built image, rather than `kind
+load docker-image` - see `docs/tutorial/12-app-deployment.md`.
+
+Separately, and worth knowing if the "already present" messaging looks
+inconsistent across nodes: `kind load docker-image` deduplicates by image
+ID/digest across the *entire* node, not per-tag - a node that had already
+pulled `localhost:5001/app-deployment-demo:v1` (same layers, different
+tag) reported the `docker.io/library/...`-tagged load as "already present
+... re-tagging" instead of transferring anything, while nodes without that
+digest cached did a real load. Not a bug, just containerd's content-
+addressed storage doing what it's designed to do - but confusing if you
+expect `kind load`'s output to be identical across every node every time.
+
 ## 2026-08-28 - kindnetd now enforces NetworkPolicy - "kindnet doesn't enforce it" is no longer a safe assumption
 
 While writing the tutorial's security chapter (`docs/tutorial/08-security.md`),

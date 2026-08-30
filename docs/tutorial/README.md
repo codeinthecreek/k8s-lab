@@ -32,6 +32,7 @@ DESIGN.md.
 | 9 | [Observability and troubleshooting](09-observability.md) | Logs, `kubectl debug`/ephemeral containers, metrics-server, common failure-mode diagnosis. Placed late so the reader has enough vocabulary from prior chapters to interpret what's broken. | verified against live cluster |
 | 10 | [Extending the API: CRDs](10-crds.md) | Custom resources and controllers as the mechanism the built-in objects (chapters 3-6) are themselves examples of. | verified against live cluster |
 | 11 | [High availability and cluster operations](11-high-availability.md) | Multi-control-plane topology, etcd quorum, load-balancer fronting, node-failure semantics, PodDisruptionBudgets, etcd backup/restore, and kubeadm cluster upgrades. Capstone chapter. | verified against live cluster |
+| 12 | [From source code to a running workload](12-app-deployment.md) | The developer-perspective seam chapters 1-11 don't cover: a minimal app + Dockerfile, build/tag/push to a local registry (`lab-helpers/registry`), `imagePullPolicy` failure modes for a self-built image, Deployment/Service/Ingress/ConfigMap tying chapters 3-5 together, and a rolling update triggered by a real source code change. Structurally distinct from the other chapters, not an extension of one. | verified against live cluster |
 
 Status values: **not started** / **drafted** (written, examples not yet
 re-verified against a live cluster) / **verified against live cluster**

@@ -252,6 +252,40 @@ container-hosted NFS export, added the same way everything else here is:
 as an explicit manifest under `manifests/storage/`, referenced from
 `manifests.txt`.
 
+## Local registry: containerd config_path patch
+
+All three profiles' `cluster.yaml` carry a top-level `containerdConfigPatches`
+setting `[plugins."io.containerd.grpc.v1.cri".registry] config_path =
+"/etc/containerd/certs.d"`. This is what lets `lab-helpers/registry` (a
+`registry:3` container, same pattern as `lab-helpers/nfs-server` - see the
+top-level README's "Lab helpers" section) act as a real image registry for
+the tutorial's developer-journey chapter (`docs/tutorial/12-*.md`):
+containerd on each node reads `/etc/containerd/certs.d/localhost:5001/hosts.toml`
+(written by `make registry-client-install`) to redirect
+`localhost:5001/<image>` pulls to the registry container over the `kind`
+Docker network, the same "consistent name that works from both ends" trick
+kind's own local-registry docs use.
+
+This is a structural `cluster.yaml` change, not something bolted on after
+cluster creation, because `containerdConfigPatches` only takes effect at
+`kind create cluster` time - unlike `lab-helpers/nfs-server`'s client
+package install, which can be redone against already-running nodes,
+enabling registry config_path support requires recreating the cluster.
+Applied to all three profiles for the same reason node image digests are
+kept in sync across them (see "Node image pinning" below): a structural
+capability like this shouldn't silently work on one profile and not
+another.
+
+**Checked directly against this repo's pinned node image, not assumed**:
+kind's own `kind-with-registry.sh` example script says this patch is "not
+necessary with images from kind v0.27.0+" - implying newer node images set
+`config_path` themselves. That's not true for `kindest/node:v1.36.1`
+(the digest pinned below): `docker exec <node> cat /etc/containerd/config.toml`
+on a freshly created node showed no `[plugins."io.containerd.grpc.v1.cri".registry]`
+block at all before this patch was added. Worth re-checking on a real node
+again before ever removing this patch on the assumption it's now baked in
+upstream.
+
 ## Node image pinning
 
 Both profiles pin `kindest/node` by tag **and** sha256 digest
