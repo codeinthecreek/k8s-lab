@@ -103,7 +103,7 @@ forgotten (the other lines are the default route and this node's own
 local Pod veth/subnet, unrelated to cross-node routing). A different CNI
 solves the same cross-node reachability problem with a completely
 different mechanism (BGP peering, a vxlan/ipip overlay, eBPF) - which is
-exactly why chapter 8 checks NetworkPolicy enforcement on kindnetd *and*
+exactly why chapter 9 checks NetworkPolicy enforcement on kindnetd *and*
 Calico separately rather than assuming one CNI's behavior generalizes to
 every other.
 

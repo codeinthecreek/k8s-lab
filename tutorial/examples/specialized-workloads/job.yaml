@@ -1,10 +1,10 @@
 # A workload that runs to completion rather than staying up - see
-# docs/tutorial/03-workloads.md's "workloads that run to completion"
-# subsection.
+# docs/tutorial/06-specialized-workloads.md's "workloads that run to
+# completion" subsection.
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: workloads-demo-job
+  name: specialized-workloads-demo-job
 spec:
   backoffLimit: 2
   template:

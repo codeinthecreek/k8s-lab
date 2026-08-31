@@ -7,7 +7,7 @@ fixed them. Newest entries at the top. Not a changelog of features -
 ## 2026-08-30 - kind's "config_path patch not needed on kind v0.27.0+ images" doesn't hold for this repo's pinned image
 
 While building the tutorial's developer-journey chapter
-(`docs/tutorial/12-app-deployment.md`) around a real local registry
+(`docs/tutorial/13-app-deployment.md`) around a real local registry
 (`lab-helpers/registry`), started from kind's own
 `kind-with-registry.sh` example, which includes a `containerdConfigPatches`
 block setting `[plugins."io.containerd.grpc.v1.cri".registry] config_path
@@ -58,7 +58,7 @@ the identical locally-loaded image works fine (no pull attempted at all).
 This is exactly why `lab-helpers/registry` (a real registry the node
 actually pulls from) exists as this tutorial's answer for testing
 `imagePullPolicy: Always` against a self-built image, rather than `kind
-load docker-image` - see `docs/tutorial/12-app-deployment.md`.
+load docker-image` - see `docs/tutorial/13-app-deployment.md`.
 
 Separately, and worth knowing if the "already present" messaging looks
 inconsistent across nodes: `kind load docker-image` deduplicates by image
@@ -72,7 +72,7 @@ expect `kind load`'s output to be identical across every node every time.
 
 ## 2026-08-28 - kindnetd now enforces NetworkPolicy - "kindnet doesn't enforce it" is no longer a safe assumption
 
-While writing the tutorial's security chapter (`docs/tutorial/08-security.md`),
+While writing the tutorial's security chapter (`docs/tutorial/09-security.md`),
 applied a NetworkPolicy on the `default` profile expecting kindnetd to
 silently ignore it (the API accepts a NetworkPolicy object regardless of
 whether any CNI enforces it - only genuinely testing traffic proves

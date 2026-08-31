@@ -1,5 +1,5 @@
 # Labeled to match the NetworkPolicy's allowed ingress source. See
-# docs/tutorial/08-security.md.
+# docs/tutorial/09-security.md.
 apiVersion: v1
 kind: Pod
 metadata:

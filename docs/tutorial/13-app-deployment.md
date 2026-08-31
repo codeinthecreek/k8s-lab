@@ -1,6 +1,6 @@
-# 12. From source code to a running workload
+# 13. From source code to a running workload
 
-Chapters 1-11 all start from the same place: a manifest or an image
+Chapters 1-12 all start from the same place: a manifest or an image
 already exists, and the question is how the cluster behaves once it's
 there. This chapter covers the seam before that - the part every prior
 chapter quietly assumed was already handled: taking your own application

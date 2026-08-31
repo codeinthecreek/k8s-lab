@@ -1,5 +1,5 @@
 # Requires the node label scheduling-demo/zone=zone-a (applied by hand
-# before this is applied - see docs/tutorial/06-scheduling.md).
+# before this is applied - see docs/tutorial/07-scheduling.md).
 apiVersion: v1
 kind: Pod
 metadata:

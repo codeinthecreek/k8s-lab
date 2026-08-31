@@ -1,6 +1,6 @@
-# 10. Extending the API: CRDs
+# 11. Extending the API: CRDs
 
-Chapter 9's diagnostic techniques - events, logs, `describe` output -
+Chapter 10's diagnostic techniques - events, logs, `describe` output -
 worked because every object involved is built into the apiserver and
 reconciled by a controller running inside `kube-controller-manager`,
 same as every other object covered so far (Pods, Deployments, Services,
@@ -10,7 +10,7 @@ manifest that teaches the apiserver a new `apiVersion`/`kind`, storage
 for it, and (if you write one) a controller to watch and act on it.
 This chapter treats CRDs as the generalization of the object model
 chapter 2 introduced, not a separate feature bolted on top of it - which
-is exactly why chapter 9's techniques carry over unchanged to a `kind`
+is exactly why chapter 10's techniques carry over unchanged to a `kind`
 you registered yourself.
 
 ### Custom resources: the same object model, a new type
@@ -71,13 +71,13 @@ does by itself. Nothing watches `spec.cronSpec` and actually schedules
 anything - that requires a separate controller (an operator) running
 somewhere, watching the type via the API and taking action, the same
 role `kube-controller-manager`'s built-in controllers play for
-ReplicaSets and Jobs (chapter 3). A `CronTab` object with no controller
+ReplicaSets and Jobs (ReplicaSets - chapter 3; Jobs - chapter 6). A `CronTab` object with no controller
 watching it just sits in etcd as structured data, forever, exactly as
 created.
 
 **Example**: the `tutorial-demo-crontab` object created above has no
 controller watching `crontabs.example.com` anywhere in this cluster -
-confirm nothing acts on it over time, unlike chapter 3's CronJob (which
+confirm nothing acts on it over time, unlike chapter 6's CronJob (which
 has a real controller built into `kube-controller-manager`):
 
 ```
@@ -87,7 +87,7 @@ kubectl get events --field-selector involvedObject.name=tutorial-demo-crontab
 
 **Expected output**: nothing - `status` is empty and there are no
 events, because no controller in this cluster is watching
-`crontabs.example.com`. Contrast this with chapter 3's CronJob, whose
+`crontabs.example.com`. Contrast this with chapter 6's CronJob, whose
 `status` fills in with `lastScheduleTime` and whose Job history rotates
 on its own, entirely because a real controller inside
 `kube-controller-manager` is reconciling it:

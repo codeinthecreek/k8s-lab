@@ -1,4 +1,4 @@
-# 6. Scheduling and resource management
+# 7. Scheduling and resource management
 
 Every chapter so far has relied on the scheduler placing Pods somewhere
 sensible without saying anything about it. This chapter makes that

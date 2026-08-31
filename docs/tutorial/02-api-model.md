@@ -113,21 +113,21 @@ were in the file that got applied - the apiserver added all of it. The
 `kubernetes.io/metadata.name` label in particular is worth noticing: an
 admission controller - a piece of apiserver logic that intercepts a
 request after auth and before it's persisted, and can mutate or reject
-it; chapter 8 covers this stage properly - adds it to every namespace
+it; chapter 9 covers this stage properly - adds it to every namespace
 automatically, which is what makes label selectors like
 `kubernetes.io/metadata.name=<ns>` usable for targeting a specific
 namespace elsewhere in the API (NetworkPolicy namespaceSelectors, for
-instance - chapter 8).
+instance - chapter 9).
 
 ### Why namespaces: isolation, scoping, and multi-tenancy
 
 **Why**: a Namespace isn't a security boundary by itself - a Pod in one
 namespace can still reach a Service in another over the network unless
-something explicitly stops it (chapter 8's NetworkPolicy). What it
+something explicitly stops it (chapter 9's NetworkPolicy). What it
 *does* provide is a scoping boundary that almost everything else in
 Kubernetes is defined relative to: object names only have to be unique
 within a namespace, not across the whole cluster, and mechanisms like
-RBAC and ResourceQuota (chapter 6) apply per-namespace by default. This
+RBAC (chapter 9) and ResourceQuota (chapter 7) apply per-namespace by default. This
 is what makes a namespace the practical unit for dividing one physical
 cluster among multiple teams, applications, or environments (`staging`
 vs `prod`, `team-a` vs `team-b`) without them colliding on names or
@@ -170,7 +170,7 @@ pods --all -n default`, or a ResourceQuota applied to `default`, has
 zero effect on anything in `kube-system` (`kube-proxy`, CoreDNS, and
 everything else chapter 1 covered), and vice versa. Namespace boundaries
 being the thing access control is drawn against also carries forward
-into chapter 8, where every effective RBAC permission is the union of
+into chapter 9, where every effective RBAC permission is the union of
 whichever `Role`/`ClusterRole` objects are bound to an identity - a
 `Role` scoped to a single namespace, a `ClusterRole` scoped to the whole
 cluster - a distinction that only makes sense once namespace scoping

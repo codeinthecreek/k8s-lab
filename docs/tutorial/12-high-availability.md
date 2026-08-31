@@ -1,4 +1,4 @@
-# 11. High availability and cluster operations
+# 12. High availability and cluster operations
 
 Every chapter so far ran against a single-control-plane cluster, where
 "the control plane" and "one node" were interchangeable. This capstone
@@ -7,7 +7,7 @@ nodes and asks what changes when there are three of everything -
 apiserver, scheduler, controller-manager, and a member of etcd. The
 short answer is: less than it looks like, because a load balancer and
 etcd's own consensus protocol absorb almost all of the difference, and
-almost everything from chapters 1-10 still applies unchanged
+almost everything from chapters 1-11 still applies unchanged
 underneath. It closes with three operational skills this topology
 exists to support: bounding *voluntary* disruption with
 PodDisruptionBudgets (as opposed to the involuntary node failure
@@ -360,7 +360,7 @@ ha-demo-pdb   2               N/A               0                    10s
 ```
 
 A `429` isn't a hard permanent failure the way the earlier `403`s in
-chapter 8 were - it's a signal to retry later, which is exactly what
+chapter 9 were - it's a signal to retry later, which is exactly what
 `kubectl drain` does internally: it keeps retrying an evict-refused Pod
 until the budget allows it (typically once the first eviction's
 replacement Pod becomes `Ready` again), rather than treating the
@@ -454,7 +454,7 @@ $ kubectl exec -n kube-system etcd-k8s-lab-ha-control-plane-control-plane -- etc
 (Confirming the restored directory's actual contents needed a detour
 - the etcd container itself ships no shell and no coreutils at all,
 `kubectl exec ... ls` fails the same "executable file not found" way
-chapter 9's `pause` container did, so the contents were checked via
+chapter 10's `pause` container did, so the contents were checked via
 the node's own filesystem instead, at `/proc/<container-pid>/root/var/lib/etcd-restore-test/`
 - `snap` and `wal` present, exactly as a real etcd data directory
 should have.)

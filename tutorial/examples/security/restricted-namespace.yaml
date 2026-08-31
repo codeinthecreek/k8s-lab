@@ -1,5 +1,5 @@
 # Pod Security Admission is enforced via plain namespace labels, not a
-# separate object. See docs/tutorial/08-security.md.
+# separate object. See docs/tutorial/09-security.md.
 apiVersion: v1
 kind: Namespace
 metadata:

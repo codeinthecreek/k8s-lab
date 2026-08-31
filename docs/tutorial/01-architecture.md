@@ -16,7 +16,7 @@ reconciliation decisions; worker nodes run the actual application
 containers and report status back. This separation is what lets you add
 or lose worker capacity without touching the components that hold
 cluster state, and what lets the control plane itself be replicated
-independently of workload placement (see chapter 11).
+independently of workload placement (see chapter 12).
 
 A control-plane node runs four components, each a separate process:
 
@@ -30,7 +30,7 @@ A control-plane node runs four components, each a separate process:
   apiserver, which reads from etcd.
 - **kube-scheduler** - watches for Pods with no node assigned and picks
   one, based on resource requests, taints/tolerations, affinity rules
-  (chapter 6). It only decides *where* a Pod should run - it doesn't run
+  (chapter 7). It only decides *where* a Pod should run - it doesn't run
   anything itself.
 - **kube-controller-manager** - runs the built-in control loops (Node
   controller, ReplicaSet controller, Job controller, and others) that
@@ -137,7 +137,7 @@ same way it would on a real VM - kind isn't faking process supervision,
 it's running the real thing one layer down. The practical consequence:
 "a node going away" and "a container going away" are the same event in
 kind (`docker stop <node-container>` is a valid, real way to simulate
-node failure - see chapter 11), which doesn't hold on a real cluster
+node failure - see chapter 12), which doesn't hold on a real cluster
 where a node is a whole machine.
 
 ### Control-plane scheduling exclusion
@@ -163,7 +163,7 @@ Taints:             node-role.kubernetes.io/control-plane:NoSchedule
 Unschedulable:      false
 ```
 
-This is a `NoSchedule` taint specifically (chapter 6 covers taint
+This is a `NoSchedule` taint specifically (chapter 7 covers taint
 effects in full) - it blocks new Pods from being placed there but
 doesn't evict anything already running. It's why the `default` profile's
 two worker nodes end up hosting ordinary workloads while the

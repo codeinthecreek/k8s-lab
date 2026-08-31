@@ -1,11 +1,11 @@
-# 9. Observability and troubleshooting
+# 10. Observability and troubleshooting
 
-Chapter 8's denials - a forbidden RBAC verb, a rejected `restricted`
+Chapter 9's denials - a forbidden RBAC verb, a rejected `restricted`
 Pod, a dropped NetworkPolicy connection - all looked the same from the
 outside: no crash, no bad config, just a request that never got where
 it was going. This chapter covers the general version of that problem:
 how to look inside a running cluster and diagnose what's wrong, using
-vocabulary chapters 1-8 have already built up - a `CrashLoopBackOff`
+vocabulary chapters 1-9 have already built up - a `CrashLoopBackOff`
 means nothing without chapter 3's restart semantics; a blank `kubectl
 logs` means nothing without knowing what the runtime actually captures.
 
@@ -121,7 +121,7 @@ app                 # .spec.containers[*].name
 API (`v1beta1.metrics.k8s.io`) that scrapes each kubelet's `/stats`
 endpoint on an interval and exposes current CPU/memory usage - distinct
 from both logs (this chapter's first section) and from the
-requests/limits chapter 6 covered (metrics-server reports *actual*
+requests/limits chapter 7 covered (metrics-server reports *actual*
 usage; requests/limits are declared intent, checked independently).
 This repo's `manifests/metrics/metrics-server.yaml` (currently pinned at
 **v0.9.0**) carries one deliberate deviation from upstream:

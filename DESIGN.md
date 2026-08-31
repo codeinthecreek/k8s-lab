@@ -111,7 +111,7 @@ enforces NetworkPolicy via an embedded, nftables-based
 profile: a NetworkPolicy that should block cross-Pod traffic genuinely
 blocked it, and kindnet's own pod logs show `"Starting controller"
 name="kube-network-policies"` and `"Policy engine is ready."` (see
-`docs/tutorial/08-security.md` and `docs/findings.md`'s 2026-08-28 entry
+`docs/tutorial/09-security.md` and `docs/findings.md`'s 2026-08-28 entry
 for how this was found). This was not always true, and most current
 material - including Kubernetes' own docs pages - still states kindnetd
 doesn't enforce NetworkPolicy, because they haven't caught up to it
@@ -259,7 +259,7 @@ setting `[plugins."io.containerd.grpc.v1.cri".registry] config_path =
 "/etc/containerd/certs.d"`. This is what lets `lab-helpers/registry` (a
 `registry:3` container, same pattern as `lab-helpers/nfs-server` - see the
 top-level README's "Lab helpers" section) act as a real image registry for
-the tutorial's developer-journey chapter (`docs/tutorial/12-*.md`):
+the tutorial's developer-journey chapter (`docs/tutorial/13-*.md`):
 containerd on each node reads `/etc/containerd/certs.d/localhost:5001/hosts.toml`
 (written by `make registry-client-install`) to redirect
 `localhost:5001/<image>` pulls to the registry container over the `kind`

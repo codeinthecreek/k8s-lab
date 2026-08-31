@@ -1,6 +1,6 @@
 # Grants read-only access to Pods in this namespace only - nothing
 # else, no other resource type, no other API group. See
-# docs/tutorial/08-security.md.
+# docs/tutorial/09-security.md.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:

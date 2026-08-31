@@ -1,6 +1,6 @@
 # registry lab helper
 
-Lab-only infrastructure for tutorial chapter 12 (source code -> running
+Lab-only infrastructure for tutorial chapter 13 (source code -> running
 Kubernetes workload). Not part of normal `make up` - see the top-level
 README's "Lab helpers" section for how this fits into the rest of the
 repo.
@@ -38,7 +38,7 @@ docker push localhost:5001/myapp:v1
 ```
 
 Then reference `localhost:5001/myapp:v1` directly in a Pod/Deployment
-spec's `image:` field - see `docs/tutorial/12-app-deployment.md` and
+spec's `image:` field - see `docs/tutorial/13-app-deployment.md` and
 `tutorial/examples/app-deployment/` for a full worked example.
 
 ## Why this needs a cluster.yaml change, unlike nfs-server
@@ -69,7 +69,7 @@ creation.
 ## imagePullPolicy still matters
 
 Wiring up the registry doesn't make `imagePullPolicy` irrelevant - see
-`docs/tutorial/12-app-deployment.md` for two real demonstrated failure
+`docs/tutorial/13-app-deployment.md` for two real demonstrated failure
 modes: `Always` against an image that was only ever `kind load
 docker-image`-d (never actually pushed anywhere) fails outright even
 though the bits are already on the node, and `IfNotPresent` against a

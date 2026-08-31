@@ -181,9 +181,10 @@ output before being written up - nothing is written from memory.
 
 Chapters run in concept-dependency order - architecture and the API
 model first, then workloads, configuration/storage, networking,
-scheduling, Helm, security, observability, CRDs, and multi-control-plane
-HA as the operator-perspective capstone. Chapter 12 closes the tutorial
-from the other direction - the developer-perspective seam the other
+specialized workloads, scheduling, Helm, security, observability, CRDs,
+and multi-control-plane HA as the operator-perspective capstone.
+Chapter 13 closes the tutorial from the other direction - the
+developer-perspective seam the other
 chapters assume is already done: source code, a Dockerfile, and a local
 registry (`lab-helpers/registry`) on the way to a Deployment. Each
 concept section follows the same shape: why the feature exists, a
@@ -224,7 +225,7 @@ ephemeral and don't retain packages installed into them after creation.
 `lab-helpers/registry/` is a real image registry (`registry:3` container,
 also on the `kind` Docker network), used by the tutorial's developer-
 journey chapter
-([docs/tutorial/12-app-deployment.md](docs/tutorial/12-app-deployment.md))
+([docs/tutorial/13-app-deployment.md](docs/tutorial/13-app-deployment.md))
 to build/tag/push a self-built image the cluster can actually pull. See
 [lab-helpers/registry/README.md](lab-helpers/registry/README.md) - unlike
 `nfs-server`, using it requires a `cluster.yaml` change (a

@@ -1,5 +1,5 @@
 # Requires a node label value that matches no node in the cluster - a
-# deliberate failure mode. See docs/tutorial/06-scheduling.md.
+# deliberate failure mode. See docs/tutorial/07-scheduling.md.
 apiVersion: v1
 kind: Pod
 metadata:

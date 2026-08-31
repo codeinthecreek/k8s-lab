@@ -1,5 +1,5 @@
 # Binds security-demo-pod-reader to security-demo-sa. See
-# docs/tutorial/08-security.md.
+# docs/tutorial/09-security.md.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:

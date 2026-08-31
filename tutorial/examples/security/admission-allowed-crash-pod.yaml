@@ -1,7 +1,7 @@
 # Satisfies every "restricted" requirement (runAsNonRoot, no privilege
 # escalation, all capabilities dropped, RuntimeDefault seccomp) so
 # admission accepts it - but the stock nginx image expects root and
-# crash-loops anyway. See docs/tutorial/08-security.md.
+# crash-loops anyway. See docs/tutorial/09-security.md.
 apiVersion: v1
 kind: Pod
 metadata:

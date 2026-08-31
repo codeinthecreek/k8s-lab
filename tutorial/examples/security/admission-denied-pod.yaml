@@ -1,6 +1,6 @@
 # Violates the "restricted" Pod Security Standard (privileged: true) -
 # rejected at admission before it's ever stored. See
-# docs/tutorial/08-security.md.
+# docs/tutorial/09-security.md.
 apiVersion: v1
 kind: Pod
 metadata:

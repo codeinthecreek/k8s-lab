@@ -1,4 +1,4 @@
-# 8. Security
+# 9. Security
 
 Every `kubectl` command and every in-cluster request this tutorial has
 run so far went through the same three independent checks: who is this

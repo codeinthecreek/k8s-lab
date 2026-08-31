@@ -1,11 +1,11 @@
-# 7. Package management with Helm
+# 8. Package management with Helm
 
-Chapters 3 through 6 all used `kubectl apply -f` against one manifest
+Chapters 3 through 7 all used `kubectl apply -f` against one manifest
 (or a small, manually-applied handful) at a time. Helm's job is
 packaging and parameterizing a *whole set* of manifests - a Deployment,
 a Service, a ServiceAccount, and more - as one versioned, installable,
 upgradeable unit. It's covered last, deliberately: everything Helm
-packages is exactly the object types the previous four chapters already
+packages is exactly the object types the previous five chapters already
 explained; there's nothing new here about what gets created, only about
 how a bundle of it is templated and tracked as a single release.
 
@@ -15,7 +15,7 @@ how a bundle of it is templated and tracked as a single release.
 a `values.yaml` supplying the variables those templates reference -
 `helm install` renders the templates locally into plain Kubernetes YAML,
 then applies it, the same fundamental operation as `kubectl apply`
-chapters 1-6 have used throughout. What Helm adds on top is a
+chapters 1-7 have used throughout. What Helm adds on top is a
 **release**: a named, versioned record of what was installed and with
 which values, stored in-cluster (as Secrets, in the release's
 namespace), giving `helm upgrade`/`helm rollback`/`helm uninstall` a

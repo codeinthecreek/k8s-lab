@@ -1,11 +1,12 @@
 # Schedules Job objects on a cron schedule - see
-# docs/tutorial/03-workloads.md's "workloads that run to completion"
-# subsection. History limits kept low deliberately so rotation is
-# observable within a few runs rather than the defaults (3/1).
+# docs/tutorial/06-specialized-workloads.md's "workloads that run to
+# completion" subsection. History limits kept low deliberately so
+# rotation is observable within a few runs rather than the defaults
+# (3/1).
 apiVersion: batch/v1
 kind: CronJob
 metadata:
-  name: workloads-demo-cronjob
+  name: specialized-workloads-demo-cronjob
 spec:
   schedule: "* * * * *"
   successfulJobsHistoryLimit: 1

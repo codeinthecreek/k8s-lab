@@ -1,6 +1,6 @@
 # Deliberately allocates more memory (150M) than its limit (100Mi) to
 # trigger a real OOMKill. requests < limits gives QoS class Burstable.
-# See docs/tutorial/06-scheduling.md.
+# See docs/tutorial/07-scheduling.md.
 apiVersion: v1
 kind: Pod
 metadata:

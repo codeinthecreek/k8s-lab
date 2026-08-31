@@ -1,7 +1,7 @@
 # Allows ingress to security-demo-target only from Pods labeled
 # role=frontend. The API accepts this identically regardless of CNI -
 # whether it's actually enforced is a separate question. See
-# docs/tutorial/08-security.md.
+# docs/tutorial/09-security.md.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

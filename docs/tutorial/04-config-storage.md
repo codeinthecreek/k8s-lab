@@ -2,7 +2,7 @@
 
 None of this chapter means anything without chapter 3's Pods to attach
 it to - a ConfigMap, Secret, or PersistentVolumeClaim is inert on its
-own, the same way a CRD is inert without a controller (chapter 10).
+own, the same way a CRD is inert without a controller (chapter 11).
 This chapter covers the two ways a Pod pulls in something that isn't
 baked into its container image: configuration data (ConfigMap, Secret)
 and storage (Volumes, PersistentVolumes/Claims, StorageClass).
@@ -88,7 +88,7 @@ ConfigMap (env or mounted volume) - the differences are about handling,
 not structure. Kubernetes stores Secret values base64-encoded, which is
 an encoding, not encryption - anyone who can `kubectl get secret -o
 yaml` can trivially decode it, so a Secret's actual security value comes
-from RBAC scoping who can read the object at all (chapter 8), not from
+from RBAC scoping who can read the object at all (chapter 9), not from
 the encoding itself. `stringData` is a write-only convenience field for
 authoring - you write plaintext, the apiserver base64-encodes it into
 `.data` on write, and reading the object back always shows `.data`, never
@@ -212,7 +212,7 @@ ahead of time, as opposed to a StorageClass provisioning one on demand
 `storageClassName` on the PVC. Merely *omitting* the field is not the
 same as setting it to an explicit empty string - the `DefaultStorageClass`
 admission controller (apiserver logic that intercepts a request after
-auth and before it's persisted, and can mutate or reject it; chapter 8
+auth and before it's persisted, and can mutate or reject it; chapter 9
 covers this stage properly) injects the cluster's default-annotated
 StorageClass onto any PVC where the field is simply absent, silently
 routing you into dynamic provisioning even when a static PV already
