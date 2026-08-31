@@ -8,9 +8,104 @@ a stable virtual IP and/or DNS name that always resolves to whichever
 Pods currently match a label selector - the same selector-based
 membership model chapter 3 already introduced for ReplicaSets, applied
 here to network addressing instead of process supervision. This chapter
-covers the Service types in the order you'd actually reach for them,
-then Ingress as an L7 layer built on top of a Service rather than a
-replacement for one.
+starts one layer lower than Services, though - with the CNI plugin that
+gives every Pod its IP in the first place, since Services and kube-proxy
+both take that IP's existence for granted - then covers the Service
+types in the order you'd actually reach for them, then Ingress as an L7
+layer built on top of a Service rather than a replacement for one.
+
+### CNI: how a Pod gets an IP in the first place
+
+**Why**: chapter 1 mentioned a **CNI plugin** running on every node
+without saying what it actually does. It's not kubelet's job (kubelet
+manages containers, not network routes) and it's not kube-proxy's job
+either (kube-proxy only programs *Service* virtual IPs, covered below -
+it has nothing to do with a Pod getting its own IP). CNI (**Container
+Network Interface**) is a plugin interface, not a Kubernetes-specific
+concept - other container runtimes use it too. For every Pod sandbox it
+creates, kubelet hands off to whatever plugin binary is registered on
+that node (`/opt/cni/bin`, configured via `/etc/cni/net.d`); that plugin
+assigns the Pod an IP and wires up its network interface. Which plugin
+is installed is entirely up to whoever set up the cluster - Calico,
+Cilium, kindnetd, and others all implement the same interface
+differently, which is exactly what "pluggable" buys: everything above
+this layer (Services, DNS, NetworkPolicy) is written against Pod IPs
+existing and being routable, not against any one CNI's internals.
+
+**Example**: this repo's `default` profile uses **kindnetd**, kind's own
+built-in CNI - a real (if minimal) implementation, not a stand-in, built
+by chaining standard upstream CNI plugin binaries rather than
+reinventing per-Pod networking from scratch:
+
+```
+docker exec k8s-lab-default-worker cat /etc/cni/net.d/10-kindnet.conflist
+docker exec k8s-lab-default-worker ls /opt/cni/bin/
+kubectl get daemonset -n kube-system kindnet
+```
+
+**Expected output**: a CNI conflist chaining two well-known plugins -
+`ptp` wires up the Pod's actual virtual interface, `host-local` hands
+out an IP from this node's own slice of the cluster's Pod CIDR - plus
+one `kindnet` DaemonSet Pod per node, which is kindnetd's own controller
+process, distinct from the `ptp`/`host-local` plugin binaries kubelet
+invokes directly:
+
+```json
+{
+	"cniVersion": "0.3.1",
+	"name": "kindnet",
+	"plugins": [
+	{
+		"type": "ptp",
+		"ipam": {
+			"type": "host-local",
+			"ranges": [ [ { "subnet": "10.244.1.0/24" } ] ]
+			...
+		}
+		...
+	},
+	{ "type": "portmap", "capabilities": { "portMappings": true } }
+	]
+}
+```
+```
+host-local  loopback  portmap  ptp
+
+NAME      DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR            AGE
+kindnet   3         3         3       3            3           kubernetes.io/os=linux   15h
+```
+
+`10.244.1.0/24` here is only this one node's slice of the Pod CIDR -
+`ptp` + `host-local` alone can assign an IP and get a Pod talking to
+other Pods *on the same node*, but reaching a Pod on a *different*
+node's slice needs a route to that node, and that's specifically what
+the `kindnet` DaemonSet Pods add, not the CNI plugin binaries invoked at
+Pod-creation time:
+
+```
+docker exec k8s-lab-default-worker ip route
+```
+
+```
+default via 172.19.0.1 dev eth0
+10.244.0.0/24 via 172.19.0.2 dev eth0
+10.244.1.3 dev veth916cdb4e scope host
+10.244.2.0/24 via 172.19.0.4 dev eth0
+172.19.0.0/16 dev eth0 proto kernel scope link src 172.19.0.3
+```
+
+The two routes that matter here are `10.244.0.0/24 via 172.19.0.2` and
+`10.244.2.0/24 via 172.19.0.4` - one per *other* node, each pointing at
+that node's own Docker container IP. That's how a packet addressed to a
+Pod on a different node's subnet actually gets there, maintained
+continuously by kindnetd's controller loop rather than set up once and
+forgotten (the other lines are the default route and this node's own
+local Pod veth/subnet, unrelated to cross-node routing). A different CNI
+solves the same cross-node reachability problem with a completely
+different mechanism (BGP peering, a vxlan/ipip overlay, eBPF) - which is
+exactly why chapter 8 checks NetworkPolicy enforcement on kindnetd *and*
+Calico separately rather than assuming one CNI's behavior generalizes to
+every other.
 
 ### ClusterIP: the default, cluster-internal Service
 

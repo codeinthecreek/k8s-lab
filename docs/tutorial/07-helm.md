@@ -45,10 +45,19 @@ Apply
 ```
 
 `manager: helm` with `operation: Apply` on a Deployment this session
-never ran `kubectl apply` against directly is the real evidence -
-that's server-side apply's field-manager bookkeeping (the same
-mechanism chapter 2 covered for `kubectl apply`), attributed to Helm
-itself.
+never ran `kubectl apply` against directly is the real evidence - but
+it's field-manager bookkeeping from a genuinely different mechanism
+than chapter 2 covered, not the same one. Chapter 2's `kubectl apply`
+is what's now called *client-side* apply (the default when you don't
+pass `--server-side`): it computes its three-way merge locally and
+relies on the `kubectl.kubernetes.io/last-applied-configuration`
+annotation to know what was previously applied. Server-side apply moves
+that computation into the apiserver itself, which tracks each field's
+owning manager directly and arbitrates conflicts between managers
+server-side - there's no `last-applied-configuration` annotation
+involved at all (check any Helm-managed object's annotations to
+confirm it's absent), because the server no longer needs a client-
+stashed diff to know what changed.
 
 A couple of smaller v4 CLI changes worth knowing so old material doesn't
 read as broken: `helm fetch` was renamed to `helm pull` (`helm fetch`

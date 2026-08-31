@@ -210,7 +210,9 @@ ahead of time, as opposed to a StorageClass provisioning one on demand
 (next section). The detail that actually controls which path you get:
 `storageClassName` on the PVC. Merely *omitting* the field is not the
 same as setting it to an explicit empty string - the `DefaultStorageClass`
-admission controller injects the cluster's default-annotated
+admission controller (apiserver logic that intercepts a request after
+auth and before it's persisted, and can mutate or reject it; chapter 8
+covers this stage properly) injects the cluster's default-annotated
 StorageClass onto any PVC where the field is simply absent, silently
 routing you into dynamic provisioning even when a static PV already
 exists for you to bind to instead.

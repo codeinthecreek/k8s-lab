@@ -317,9 +317,15 @@ spec:
 `service.yaml` is a plain ClusterIP selecting `app: app-deployment-demo`
 on port 80 -> 8080. `ingress.yaml` routes `/app-deployment-demo` to it
 (a distinct path from chapter 5's own `/` demo Ingress, so both can exist
-on the same cluster at once), using the same `rewrite-target` annotation
-pattern needed whenever the Ingress path doesn't match what the backend
-app itself expects to see:
+on the same cluster at once). Chapter 5's Ingress routed `/` itself, so
+nothing needed rewriting; here the app is mounted under a path prefix,
+which ingress-nginx (this is nginx-specific, not part of the core
+Ingress API) handles by combining a regex `path` with a
+`rewrite-target` annotation: `(/|$)(.*)` captures whatever comes after
+`/app-deployment-demo` into capture group `$2`, and
+`rewrite-target: /$2` is what's actually forwarded to the backend - so
+a request for `/app-deployment-demo/foo` reaches the app as `/foo`, the
+prefix stripped entirely before the app ever sees it:
 
 ```yaml
 # ingress.yaml

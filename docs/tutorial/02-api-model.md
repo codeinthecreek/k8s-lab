@@ -111,10 +111,70 @@ None of `creationTimestamp`, `uid`, `resourceVersion`, the
 `last-applied-configuration` annotation, or the entire `status` block
 were in the file that got applied - the apiserver added all of it. The
 `kubernetes.io/metadata.name` label in particular is worth noticing: an
-admission controller adds it to every namespace automatically, which is
-what makes label selectors like `kubernetes.io/metadata.name=<ns>`
-usable for targeting a specific namespace elsewhere in the API (NetworkPolicy
-namespaceSelectors, for instance - chapter 8).
+admission controller - a piece of apiserver logic that intercepts a
+request after auth and before it's persisted, and can mutate or reject
+it; chapter 8 covers this stage properly - adds it to every namespace
+automatically, which is what makes label selectors like
+`kubernetes.io/metadata.name=<ns>` usable for targeting a specific
+namespace elsewhere in the API (NetworkPolicy namespaceSelectors, for
+instance - chapter 8).
+
+### Why namespaces: isolation, scoping, and multi-tenancy
+
+**Why**: a Namespace isn't a security boundary by itself - a Pod in one
+namespace can still reach a Service in another over the network unless
+something explicitly stops it (chapter 8's NetworkPolicy). What it
+*does* provide is a scoping boundary that almost everything else in
+Kubernetes is defined relative to: object names only have to be unique
+within a namespace, not across the whole cluster, and mechanisms like
+RBAC and ResourceQuota (chapter 6) apply per-namespace by default. This
+is what makes a namespace the practical unit for dividing one physical
+cluster among multiple teams, applications, or environments (`staging`
+vs `prod`, `team-a` vs `team-b`) without them colliding on names or
+needing separate infrastructure. Not every object is scoped this way,
+though - `Node`, `PersistentVolume`, `ClusterRole`, and `Namespace`
+itself exist once per cluster regardless of namespace, checkable
+directly with `kubectl api-resources --namespaced=false`.
+
+**Example**: the exact same object name, `Pod` and all, created in two
+different namespaces at once - something a single flat namespace
+couldn't allow:
+
+```
+kubectl create namespace tutorial-api-model-team-b
+kubectl run namespace-demo --image=nginx:1.27 -n tutorial-api-model
+kubectl run namespace-demo --image=nginx:1.27 -n tutorial-api-model-team-b
+kubectl get pods -n tutorial-api-model
+kubectl get pods -n tutorial-api-model-team-b
+```
+
+**Expected output**: two genuinely separate Pod objects, same name,
+neither aware the other exists:
+
+```
+namespace/tutorial-api-model-team-b created
+pod/namespace-demo created
+pod/namespace-demo created
+
+NAME             READY   STATUS    RESTARTS   AGE
+namespace-demo   1/1     Running   0          4s
+
+NAME             READY   STATUS    RESTARTS   AGE
+namespace-demo   1/1     Running   0          3s
+```
+
+This is also why `kube-system` is kept separate from `default` rather
+than running the control plane's own DaemonSets and Deployments
+alongside whatever the cluster is actually used for: a `kubectl delete
+pods --all -n default`, or a ResourceQuota applied to `default`, has
+zero effect on anything in `kube-system` (`kube-proxy`, CoreDNS, and
+everything else chapter 1 covered), and vice versa. Namespace boundaries
+being the thing access control is drawn against also carries forward
+directly into chapter 8: a `Role` grants permissions inside one
+namespace, a `ClusterRole` grants them cluster-wide (or is reused across
+many namespaces via multiple `RoleBinding`s) - the distinction only
+makes sense once namespace scoping itself is a solid mental model,
+which is what this section is for.
 
 ### kubectl as an API client, not a special protocol
 

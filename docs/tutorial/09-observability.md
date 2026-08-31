@@ -57,9 +57,11 @@ $ docker exec <node-container> wc -l /var/log/pods/default_observability-demo-si
 
 ### `kubectl debug` and ephemeral containers
 
-**Why**: plenty of real-world images (distroless, `pause`-style, minimal
-scratch-based builds) ship with no shell and no debugging tools at all -
-by design, for a smaller attack surface. `kubectl exec ... -- sh` simply
+**Why**: plenty of real-world images (**distroless** - an image built
+from just an application binary and its runtime dependencies, with no
+shell, package manager, or OS userland at all - plus `pause`-style,
+minimal scratch-based builds) ship with no debugging tools at all - by
+design, for a smaller attack surface. `kubectl exec ... -- sh` simply
 fails against them. An **ephemeral container** solves this: a
 temporary, purpose-built debug container injected into an *already-
 running* Pod's `spec.ephemeralContainers[]` - a genuinely separate list
@@ -219,3 +221,11 @@ deprecation notice. "Deprecated" is a schedule someone announced, not a
 guarantee of what actually happened - the only way to know which is
 true for a given claim is to check a live cluster, exactly as this
 tutorial has done for every chapter before this one.
+
+Everything this chapter covered - events, logs, `describe` output -
+works identically on the built-in Pods and Deployments used to
+demonstrate it here. Chapter 10 introduces CustomResourceDefinitions,
+which extend the apiserver with entirely new kinds; the object model
+underneath (and so the way you'd troubleshoot one) doesn't change just
+because the `kind` is one you registered yourself instead of one that
+shipped with Kubernetes.
