@@ -25,8 +25,8 @@ way.
 
 **Example**: create a ServiceAccount, mint a token for it, and use that
 token directly against the API server - the same "kubectl is just an
-HTTPS client" fact chapter 2 established, now with a non-`kubectl`
-identity:
+HTTPS client" fact chapter 2's `-v=8` tracing made visible, now proven
+by using `curl` instead of `kubectl` with a non-`kubectl` identity:
 
 ```
 kubectl apply -f tutorial/examples/security/serviceaccount.yaml
@@ -234,7 +234,15 @@ Now the same objects, on `calico` - not because it's the only CNI that
 enforces `NetworkPolicy` anymore, but because independently confirming
 enforcement on a second, purpose-built CNI is still worth doing rather
 than assuming this repo's two profiles behave identically just because
-one does:
+one does.
+
+**Heads-up**: the block below tears down and rebuilds the cluster
+(`default` -> `calico` -> back), which takes roughly 10 minutes round-trip
+- mostly `calico`'s own `kind create cluster --wait 5m` genuinely
+spending the full 5 minutes, since that profile disables kindnetd
+entirely (`disableDefaultCNI: true`) and nodes can't report `Ready`
+until Calico's manifest is applied afterward; skim to **Expected output
+(calico profile)** below to see the result without running it yourself:
 
 ```
 kubectl delete -f tutorial/examples/security/networkpolicy.yaml -f tutorial/examples/security/netpol-target-pod.yaml -f tutorial/examples/security/netpol-client-allowed-pod.yaml -f tutorial/examples/security/netpol-client-blocked-pod.yaml
