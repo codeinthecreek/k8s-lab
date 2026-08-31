@@ -170,11 +170,11 @@ pods --all -n default`, or a ResourceQuota applied to `default`, has
 zero effect on anything in `kube-system` (`kube-proxy`, CoreDNS, and
 everything else chapter 1 covered), and vice versa. Namespace boundaries
 being the thing access control is drawn against also carries forward
-directly into chapter 8: a `Role` grants permissions inside one
-namespace, a `ClusterRole` grants them cluster-wide (or is reused across
-many namespaces via multiple `RoleBinding`s) - the distinction only
-makes sense once namespace scoping itself is a solid mental model,
-which is what this section is for.
+into chapter 8, where every effective RBAC permission is the union of
+whichever `Role`/`ClusterRole` objects are bound to an identity - a
+`Role` scoped to a single namespace, a `ClusterRole` scoped to the whole
+cluster - a distinction that only makes sense once namespace scoping
+itself is a solid mental model, which is what this section is for.
 
 ### kubectl as an API client, not a special protocol
 

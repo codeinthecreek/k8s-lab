@@ -1,14 +1,17 @@
 # 10. Extending the API: CRDs
 
-Every object covered so far - Pods, Deployments, Services, even Jobs -
-is built into the apiserver and reconciled by a controller running
-inside `kube-controller-manager`. A CustomResourceDefinition (CRD) is
-how you register an entirely new type the same way, without recompiling
-anything: a plain manifest that teaches the apiserver a new
-`apiVersion`/`kind`, storage for it, and (if you write one) a
-controller to watch and act on it. This chapter treats CRDs as the
-generalization of the object model chapter 2 introduced, not a separate
-feature bolted on top of it.
+Chapter 9's diagnostic techniques - events, logs, `describe` output -
+worked because every object involved is built into the apiserver and
+reconciled by a controller running inside `kube-controller-manager`,
+same as every other object covered so far (Pods, Deployments, Services,
+even Jobs). A CustomResourceDefinition (CRD) is how you register an
+entirely new type the same way, without recompiling anything: a plain
+manifest that teaches the apiserver a new `apiVersion`/`kind`, storage
+for it, and (if you write one) a controller to watch and act on it.
+This chapter treats CRDs as the generalization of the object model
+chapter 2 introduced, not a separate feature bolted on top of it - which
+is exactly why chapter 9's techniques carry over unchanged to a `kind`
+you registered yourself.
 
 ### Custom resources: the same object model, a new type
 

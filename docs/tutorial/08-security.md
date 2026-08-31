@@ -271,12 +271,3 @@ of this tutorial on `default`:
 make down PROFILE=calico
 make up PROFILE=default
 ```
-
-Every denial this chapter produced on purpose - a forbidden RBAC verb,
-a rejected `restricted` Pod, a dropped NetworkPolicy connection - looked
-different from an ordinary bug: no crash, no bad config, just a request
-that never got where it was going. Chapter 9 is about the general
-version of that problem - reading `kubectl describe` events, apiserver
-responses, and container logs to figure out *why* something isn't
-happening, whether the cause is a security control like these or
-something far more mundane.

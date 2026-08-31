@@ -1,11 +1,13 @@
 # 9. Observability and troubleshooting
 
-This chapter is placed last among the "core" chapters deliberately - it
-covers how to look inside a running cluster and diagnose what's wrong,
-which only makes sense once there's enough vocabulary from chapters 1-8
-to interpret what you're looking at. A `CrashLoopBackOff` means nothing
-without chapter 3's restart semantics; a blank `kubectl logs` means
-nothing without knowing what the runtime actually captures.
+Chapter 8's denials - a forbidden RBAC verb, a rejected `restricted`
+Pod, a dropped NetworkPolicy connection - all looked the same from the
+outside: no crash, no bad config, just a request that never got where
+it was going. This chapter covers the general version of that problem:
+how to look inside a running cluster and diagnose what's wrong, using
+vocabulary chapters 1-8 have already built up - a `CrashLoopBackOff`
+means nothing without chapter 3's restart semantics; a blank `kubectl
+logs` means nothing without knowing what the runtime actually captures.
 
 ### Logs: `kubectl logs` only ever shows stdout/stderr
 
@@ -221,11 +223,3 @@ deprecation notice. "Deprecated" is a schedule someone announced, not a
 guarantee of what actually happened - the only way to know which is
 true for a given claim is to check a live cluster, exactly as this
 tutorial has done for every chapter before this one.
-
-Everything this chapter covered - events, logs, `describe` output -
-works identically on the built-in Pods and Deployments used to
-demonstrate it here. Chapter 10 introduces CustomResourceDefinitions,
-which extend the apiserver with entirely new kinds; the object model
-underneath (and so the way you'd troubleshoot one) doesn't change just
-because the `kind` is one you registered yourself instead of one that
-shipped with Kubernetes.
