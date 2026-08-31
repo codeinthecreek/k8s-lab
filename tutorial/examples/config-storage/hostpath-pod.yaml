@@ -1,0 +1,24 @@
+# Mounts config-storage-demo-hostpath-pvc. Pinned to the same node as
+# the PV's hostPath directory via nodeSelector - the PV's nodeAffinity
+# would otherwise leave the Pod unschedulable if it landed elsewhere.
+# See docs/tutorial/04-config-storage.md.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: config-storage-demo-hostpath-pod
+  labels:
+    app: config-storage-demo
+spec:
+  nodeSelector:
+    kubernetes.io/hostname: k8s-lab-default-worker
+  containers:
+  - name: app
+    image: busybox:1.36
+    command: ["sh", "-c", "sleep 3600"]
+    volumeMounts:
+    - name: hostpath-vol
+      mountPath: /mnt/hostpath
+  volumes:
+  - name: hostpath-vol
+    persistentVolumeClaim:
+      claimName: config-storage-demo-hostpath-pvc

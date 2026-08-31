@@ -202,10 +202,11 @@ shell script wrapped in `sh -c` is a common way to accidentally hit it.
 **Why**: a `Volume` disappears with its Pod - real persistent storage
 needs to outlive any one Pod, and potentially be shared across nodes,
 which is what PersistentVolume (PV) and PersistentVolumeClaim (PVC)
-exist for. A PV represents an actual piece of storage (here: a real NFS
-export, not a `hostPath` stand-in); a PVC is a Pod-facing *request* for
-storage matching some criteria, which the control plane binds to a
-matching PV. **Static binding** means a human created the PV by hand
+exist for. A PV represents an actual piece of storage, whatever's
+actually backing it (a directory on a node's disk, a real NFS export,
+a cloud disk); a PVC is a Pod-facing *request* for storage matching some
+criteria, which the control plane binds to a matching PV. **Static
+binding** means a human created the PV by hand
 ahead of time, as opposed to a StorageClass provisioning one on demand
 (next section). The detail that actually controls which path you get:
 `storageClassName` on the PVC. Merely *omitting* the field is not the
@@ -217,9 +218,55 @@ StorageClass onto any PVC where the field is simply absent, silently
 routing you into dynamic provisioning even when a static PV already
 exists for you to bind to instead.
 
-**Example**: this repo's `lab-helpers/nfs-server/` runs a real NFS
-server on the `kind` Docker network specifically for this
-(`make nfs-up`, `make nfs-client-install PROFILE=default` first - see
+**Example**: the binding mechanics are the same regardless of what's
+actually backing the storage, so start with the simplest possible
+backend - a directory on a node's own filesystem - before bringing in a
+real network filesystem. `tutorial/examples/config-storage/hostpath-pv.yaml`
+uses a `hostPath` volume, pinned via `nodeAffinity` to one specific node
+(a `hostPath` directory only exists on the one node it names, unlike NFS
+below), and `tutorial/examples/config-storage/hostpath-pvc.yaml` again
+sets `storageClassName: ""` explicitly:
+
+```
+kubectl apply -f tutorial/examples/config-storage/hostpath-pv.yaml
+kubectl apply -f tutorial/examples/config-storage/hostpath-pvc.yaml
+kubectl get pv config-storage-demo-hostpath-pv
+kubectl get pvc config-storage-demo-hostpath-pvc
+kubectl apply -f tutorial/examples/config-storage/hostpath-pod.yaml
+kubectl exec config-storage-demo-hostpath-pod -- sh -c "echo written-by-pod > /mnt/hostpath/from-pod.txt; cat /mnt/hostpath/from-pod.txt"
+```
+
+**Expected output**: the PVC binds directly to the named PV, no
+provisioner involved:
+
+```
+persistentvolume/config-storage-demo-hostpath-pv created
+persistentvolumeclaim/config-storage-demo-hostpath-pvc created
+
+NAME                               STATUS   VOLUME                            CAPACITY   ACCESS MODES   STORAGECLASS   AGE
+config-storage-demo-hostpath-pvc   Bound    config-storage-demo-hostpath-pv   1Gi        RWO                           1s
+```
+
+And the write actually lands on the node's real filesystem, not just
+inside the container - confirmed by reading the same path back on the
+node itself (`docker exec k8s-lab-default-worker cat
+/tmp/config-storage-demo-hostpath/from-pod.txt`) and finding the exact
+file the Pod wrote:
+
+```
+$ kubectl exec config-storage-demo-hostpath-pod -- sh -c "echo written-by-pod > /mnt/hostpath/from-pod.txt; cat /mnt/hostpath/from-pod.txt"
+written-by-pod
+```
+
+Same binding mechanics, no server to stand up - the only difference from
+what follows is where the bytes actually live: one node's local disk
+instead of a real shared export, which is also why the PV needed
+`nodeAffinity` here and doesn't for NFS below.
+
+Now the same PV/PVC binding against real shared storage: this repo's
+`lab-helpers/nfs-server/` runs a real NFS server on the `kind` Docker
+network specifically for this (`make nfs-up`, `make nfs-client-install
+PROFILE=default` first - see
 [lab-helpers/nfs-server/README.md](../../lab-helpers/nfs-server/README.md)
 for the `fsid=0` mount-path gotcha this PV's `nfs.path: /` already
 accounts for).

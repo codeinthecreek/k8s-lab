@@ -1,0 +1,28 @@
+# Static binding: a hand-created PersistentVolume backed by a hostPath
+# directory - the simplest possible way to see PV/PVC binding mechanics,
+# no real storage backend required. nodeAffinity pins it to one specific
+# node, since a hostPath directory only exists on the one node it names,
+# not anywhere a Pod might be scheduled. storageClassName: "" (explicit
+# empty string, not omitted) is what makes this static rather than
+# dynamic - see docs/tutorial/04-config-storage.md.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: config-storage-demo-hostpath-pv
+spec:
+  capacity:
+    storage: 1Gi
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: ""
+  hostPath:
+    path: /tmp/config-storage-demo-hostpath
+    type: DirectoryOrCreate
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+      - matchExpressions:
+        - key: kubernetes.io/hostname
+          operator: In
+          values:
+          - k8s-lab-default-worker

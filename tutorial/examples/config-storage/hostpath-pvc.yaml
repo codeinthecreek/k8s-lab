@@ -1,0 +1,15 @@
+# Binds statically to config-storage-demo-hostpath-pv - storageClassName:
+# "" (explicit) is required, an omitted field would instead trigger
+# dynamic provisioning via the default StorageClass. See
+# docs/tutorial/04-config-storage.md.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: config-storage-demo-hostpath-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: ""
+  resources:
+    requests:
+      storage: 1Gi
