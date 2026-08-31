@@ -298,31 +298,10 @@ data-workloads-demo-sts-0   Bound    pvc-9805175e-a63f-430f-b2bc-20d8a92f5fdf   
 data-workloads-demo-sts-1   Bound    pvc-473c729b-a436-4e4b-ba98-c6ee98ec90a6   100Mi      RWO            standard
 ```
 
-The DNS check needed the fully-qualified name above, not the shorter
-`workloads-demo-sts-0.workloads-demo-sts` the search-domain mechanism
-(chapter 5) should in principle resolve on its own - worth checking
-directly rather than assuming, since it didn't work as expected:
-
-```
-$ kubectl run workloads-demo-dnscheck --image=busybox:1.36 --restart=Never -i --rm --command -- \
-  nslookup workloads-demo-sts-0.workloads-demo-sts
-Server:		10.96.0.10
-Address:	10.96.0.10:53
-
-** server can't find workloads-demo-sts-0.workloads-demo-sts: NXDOMAIN
-```
-
-The Pod's own `/etc/resolv.conf` does list the expected search domains
-(`search default.svc.cluster.local svc.cluster.local cluster.local`,
-`options ndots:5`, meaning a name with fewer than 5 dots should get
-those suffixes tried automatically) - so the search list itself is
-correctly configured. The failure is specific to BusyBox's `nslookup`
-applet, which issues a single literal query rather than walking
-`resolv.conf`'s search list the way a normal application's resolver
-call (`getaddrinfo`, which most real clients use) would. Supplying the
-FQDN directly - `workloads-demo-sts-0.workloads-demo-sts.default.svc.cluster.local`
-- resolves correctly, straight to that specific Pod's IP, not a
-load-balanced VIP:
+The fully-qualified name resolves straight to that specific Pod's IP,
+not a load-balanced VIP - the point that actually matters for "why
+StatefulSet": each ordinal gets its own durable address, not a shared
+one:
 
 ```
 $ kubectl run workloads-demo-dnscheck --image=busybox:1.36 --restart=Never -i --rm --command -- \
