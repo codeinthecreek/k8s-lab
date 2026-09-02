@@ -18,7 +18,11 @@ or lose worker capacity without touching the components that hold
 cluster state, and what lets the control plane itself be replicated
 independently of workload placement (see chapter 12).
 
-A control-plane node runs four components, each a separate process:
+A control-plane node runs four components, each a separate process. All
+four exist to serve etcd, the cluster's single source of truth for
+state: kube-apiserver is the only one allowed to read or write it
+directly, and the other two watch it through kube-apiserver and act on
+what they see:
 
 - **kube-apiserver** - the only component that talks to etcd directly.
   Every other component, and every `kubectl` command, goes through it.
@@ -53,8 +57,8 @@ A worker node runs two components:
 
 Both roles also run a **container runtime** (containerd, in kind's case
 - verified via `containerd --version` inside a node container, currently
-`v2.3.1`) and a **CNI plugin** that provisions pod networking - covered
-in chapter 5.
+`v2.3.1`) and a **CNI** (Container Network Interface) plugin, which
+provisions networking for each Pod - covered in chapter 5.
 
 ### Static pods: how the control plane bootstraps itself
 
