@@ -49,7 +49,7 @@ kube-proxy-xx42q   1/1     Running   0          16h
 ```
 
 `kube-proxy-9vnfm` is a genuinely new Pod object, not the old one
-restarted - the DaemonSet controller (chapter 3 covers controllers in
+restarted - the DaemonSet controller (chapter 6 covers DaemonSet in
 depth) is watching desired vs. actual node coverage and created it the
 moment it saw one node without a kube-proxy Pod.
 

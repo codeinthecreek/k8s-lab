@@ -151,8 +151,9 @@ etcd and the apiserver would let a noisy or misbehaving workload starve
 the components the whole cluster depends on. kubeadm (and therefore
 kind) taints every control-plane node on creation so that ordinary Pods
 aren't scheduled there by default, without making the node unusable for
-anything - DaemonSets that tolerate the taint (kindnet, kube-proxy) still
-run on it.
+anything - DaemonSets (a workload that runs one Pod per node rather than
+a chosen replica count; chapter 6 covers them fully) that tolerate the
+taint (kindnet, kube-proxy) still run on it.
 
 **Example**:
 

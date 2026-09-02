@@ -46,9 +46,11 @@ kubectl get daemonset -n kube-system kindnet
 **Expected output**: a CNI conflist chaining two well-known plugins -
 `ptp` wires up the Pod's actual virtual interface, `host-local` hands
 out an IP from this node's own slice of the cluster's Pod CIDR - plus
-one `kindnet` DaemonSet Pod per node, which is kindnetd's own controller
+one `kindnet` DaemonSet Pod per node (DaemonSet as a general workload
+type - one Pod per node rather than a chosen replica count - is covered
+in chapter 6; what matters here is just kindnetd's own controller
 process, distinct from the `ptp`/`host-local` plugin binaries kubelet
-invokes directly:
+invokes directly):
 
 ```json
 {

@@ -1,14 +1,19 @@
-# 6. Specialized workloads: StatefulSet, Job, and CronJob
+# 6. Specialized workloads: StatefulSet, DaemonSet, Job, and CronJob
 
 Chapter 3 covered the Pod/ReplicaSet/Deployment line, where every
 replica is interchangeable - any one of them can be killed and
 replaced without anyone needing to track which, and none of them has
-an identity beyond a random name suffix. This chapter covers three
-workload shapes that are deliberate exceptions to that model. First,
-StatefulSet, for workloads that need stable per-replica identity and
-storage instead of interchangeability - now that chapter 4's
-PersistentVolumeClaims and chapter 5's Service model are both in
-place, the two mechanisms StatefulSet actually builds on. Then Job and
+an identity beyond a random name suffix, and where the scheduler picks
+freely among whichever nodes have room rather than any Pod caring which
+node it lands on. This chapter covers four workload shapes that are
+deliberate exceptions to that model. First, StatefulSet, for workloads
+that need stable per-replica identity and storage instead of
+interchangeability - now that chapter 4's PersistentVolumeClaims and
+chapter 5's Service model are both in place, the two mechanisms
+StatefulSet actually builds on. Then DaemonSet, for workloads that need
+exactly one Pod per node rather than some replica count chosen
+independently of node count - chapter 5 already ran into one of these
+(kindnet) without covering DaemonSet as a general concept. Then Job and
 CronJob, for work that's meant to run to completion and stop rather
 than stay up - a different reconciliation target ("N successful
 completions" instead of "N running replicas"), not a new architectural
@@ -148,6 +153,110 @@ the assumption that the storage is worth more than the convenience of
 automatic cleanup - the exact opposite default from a bare Pod's
 `emptyDir` (chapter 4), which vanishes the moment the Pod does.
 
+### DaemonSet: one Pod per node, not a replica count
+
+**Why**: StatefulSet changes what "one replica" means; DaemonSet changes
+how many there are, and why. Some workloads aren't about *N*
+interchangeable copies at all - they're node-level daemons that need to
+run exactly once on every node (or every node matching some criteria):
+log collectors, CNI plugins (chapter 5's kindnet is one), monitoring
+agents. A Deployment can't express that - `replicas: N` is a number you
+choose, unrelated to how many nodes exist, and the scheduler is free to
+stack several of those replicas on one node while leaving another idle.
+DaemonSet has no `replicas` field at all: its desired Pod count is
+derived from the cluster's node count, one Pod per matching node,
+growing and shrinking automatically as nodes join or leave - nobody
+edits that number by hand. Mechanically, the DaemonSet controller
+creates one Pod per matching node and pins each to its specific node
+with a generated `nodeAffinity` (`metadata.name In [that-node]`) rather
+than leaving node choice to the scheduler's normal fit-scoring - but
+that pinned Pod still goes through the scheduler like any other, so
+ordinary scheduling constraints, including taints, still apply. That
+last point matters concretely: chapter 1's control-plane taint excludes
+ordinary Pods from the control-plane node, and a DaemonSet is no
+exception unless its Pod template explicitly tolerates that taint -
+which is exactly what lets kindnet and kube-proxy run there while an
+untolerated DaemonSet would not.
+
+**Example**: `tutorial/examples/specialized-workloads/daemonset.yaml` -
+no `replicas` field, and no toleration yet:
+
+```yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: specialized-workloads-demo-ds
+  labels:
+    app: specialized-workloads-demo-ds
+spec:
+  selector:
+    matchLabels:
+      app: specialized-workloads-demo-ds
+  template:
+    metadata:
+      labels:
+        app: specialized-workloads-demo-ds
+    spec:
+      containers:
+      - name: busybox
+        image: busybox:1.36
+        command: ["sh", "-c", "sleep 3600"]
+```
+
+```
+kubectl apply -f tutorial/examples/specialized-workloads/daemonset.yaml
+kubectl get daemonset specialized-workloads-demo-ds
+kubectl get pods -l app=specialized-workloads-demo-ds -o wide
+```
+
+**Expected output**: `DESIRED` is `2`, not the cluster's full node count
+of 3 - the control-plane node's taint excluded it automatically, without
+any `nodeSelector` naming it, and the two Pods that did get created
+landed one on each worker:
+
+```
+$ kubectl get daemonset specialized-workloads-demo-ds
+NAME                            DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR   AGE
+specialized-workloads-demo-ds   2         2         2       2            2           <none>          8s
+
+$ kubectl get pods -l app=specialized-workloads-demo-ds -o wide
+NAME                                  READY   STATUS    RESTARTS   AGE   NODE
+specialized-workloads-demo-ds-72hm4   1/1     Running   0          8s    k8s-lab-default-worker2
+specialized-workloads-demo-ds-ksmpj   1/1     Running   0          8s    k8s-lab-default-worker
+```
+
+Adding the same toleration kindnet and kube-proxy already carry gets the
+third Pod onto the control-plane node too, and `DESIRED` updates itself
+to match - nobody told it "3" directly, it recomputed from node count
+plus toleration:
+
+```
+kubectl patch daemonset specialized-workloads-demo-ds --type=json \
+  -p '[{"op":"add","path":"/spec/template/spec/tolerations","value":[{"key":"node-role.kubernetes.io/control-plane","operator":"Exists","effect":"NoSchedule"}]}]'
+kubectl get daemonset specialized-workloads-demo-ds
+kubectl get pods -l app=specialized-workloads-demo-ds -o wide
+```
+
+**Expected output**: `DESIRED` is now `3`, and a Pod is running on the
+control-plane node - the same exception chapter 1 described for kindnet
+and kube-proxy, now reproduced directly rather than just asserted
+(patching the template also triggers a rolling replacement of the
+existing Pods one node at a time, DaemonSet's default update strategy,
+so a `kubectl get pods` run mid-rollout may briefly show a
+`Terminating`/`ContainerCreating` pair before it settles):
+
+```
+$ kubectl get daemonset specialized-workloads-demo-ds
+NAME                            DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR   AGE
+specialized-workloads-demo-ds   3         3         3       3            3           <none>          113s
+
+$ kubectl get pods -l app=specialized-workloads-demo-ds -o wide
+NAME                                  READY   STATUS    RESTARTS   AGE   NODE
+specialized-workloads-demo-ds-dm6m2   1/1     Running   0          47s   k8s-lab-default-worker2
+specialized-workloads-demo-ds-rtm9p   1/1     Running   0          88s   k8s-lab-default-control-plane
+specialized-workloads-demo-ds-t9vnt   1/1     Running   0          13s   k8s-lab-default-worker
+```
+
 ### Workloads that run to completion: Job and CronJob
 
 **Why**: not every workload should stay running. A batch computation, a
@@ -286,6 +395,7 @@ $ echo $(( 1787890740 / 60 ))
 taking it on faith.
 
 Every workload covered so far - Pod, ReplicaSet, Deployment,
-StatefulSet, Job, CronJob - still depends on the scheduler having
-actually picked a node for each Pod it creates. Chapter 7 covers how
-that placement decision gets made, and how to constrain it.
+StatefulSet, DaemonSet, Job, CronJob - still depends on the scheduler
+having actually picked a node for each Pod it creates, DaemonSet's
+generated `nodeAffinity` included. Chapter 7 covers how that placement
+decision gets made, and how to constrain it.
