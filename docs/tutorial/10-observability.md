@@ -115,6 +115,82 @@ debugger-d77f6      # .spec.ephemeralContainers[*].name
 app                 # .spec.containers[*].name
 ```
 
+### `crictl`: the node's CRI-level view, independent of the API server
+
+**Why**: everything so far - `kubectl logs`, `kubectl debug`, even
+`kubectl get pod` - is mediated by the apiserver and, transitively, by
+the kubelet reporting into it. That chain is exactly what's unavailable
+if either one is unhealthy: a wedged kubelet or an unreachable apiserver
+still leaves the container runtime itself running real workloads on the
+node, with no `kubectl` command able to see them. `crictl` talks
+directly to the CRI socket on the node - containerd here, same as every
+profile in this repo - bypassing the apiserver and kubelet entirely.
+It's not a `kubectl` plugin or anything installed cluster-wide; it's a
+binary already present inside each kind node's container, reached the
+same way chapter 1's node-as-container model reaches anything else on a
+node: `docker exec <node>`.
+
+**Example**: list every container the CRI knows about, on one node,
+with no `kubectl` involved at all:
+
+```
+docker exec k8s-lab-default-worker crictl ps
+```
+
+**Expected output**: real containers, keyed by CRI container ID and
+Pod, for every workload the runtime is actually running on that node -
+the same Pods `kubectl get pods -A --field-selector spec.nodeName=k8s-lab-default-worker`
+would show, arrived at through a completely different path:
+
+```
+CONTAINER      IMAGE           CREATED         STATE     NAME             ATTEMPT   POD ID         POD                                NAMESPACE
+27d79e2ce44c3  b116e15507444   2 minutes ago   Running   writer           0         ec2764618405b  scheduling-demo-quota-storage-pod scheduling-demo-governance
+9cae86819c645  d7b01abacd67f   11 minutes ago  Running   metrics-server   0         96c5112863a47  metrics-server-5b58578978-rxddx   kube-system
+c80041e4fe698  e44e5463fce88   12 minutes ago  Running   kindnet-cni      0         1a2e23576f423  kindnet-6wnfv                     kube-system
+```
+
+`crictl pods` shows the same information one level up, at Pod-sandbox
+granularity rather than per-container - useful when the question is
+"what Pods does this node's runtime think are running" rather than "what
+containers." Either way, this is the runtime's own bookkeeping, current
+and accurate on this node regardless of what the apiserver or kubelet on
+that node are doing right now.
+
+### `journalctl -u kubelet`: the kubelet's own logs, on the node
+
+**Why**: `kubectl logs` (this chapter's first section) only ever shows a
+*container's* stdout/stderr - it has nothing to say about the kubelet
+itself, the process on each node responsible for actually starting
+those containers in the first place. On a systemd-based node image
+(this repo's `kindest/node` build included), the kubelet runs as a
+systemd unit and its logs go to the journal, reached with the same
+`docker exec <node>` pattern already used for `crictl` above and for
+inspecting `containerd`'s config in `docs/findings.md`.
+
+**Example**:
+
+```
+docker exec k8s-lab-default-worker journalctl -u kubelet --no-pager -n 15
+```
+
+**Expected output**: real, current kubelet log lines - volume
+mount/unmount bookkeeping, pod startup latency tracking, and anything
+the kubelet itself is doing on that node right now, independent of
+whether any particular container's own logs say anything at all:
+
+```
+Sep 03 01:01:41 k8s-lab-default-worker kubelet[315]: I0903 01:01:41.025050     315 reconciler_common.go:251] "operationExecutor.VerifyControllerAttachedVolume started for volume ..." pod="scheduling-demo-governance/scheduling-demo-quota-storage-pod"
+Sep 03 01:01:49 k8s-lab-default-worker kubelet[315]: I0903 01:01:49.687449     315 pod_startup_latency_tracker.go:148] "Observed pod startup duration" pod="scheduling-demo-governance/scheduling-demo-quota-storage-pod" podStartSLOduration=13.677716157999999 podStartE2EDuration="20.687419379s"
+```
+
+This is the layer below `kubectl describe`'s Events section (later in
+this chapter): Events are what the kubelet chose to report back to the
+apiserver about a Pod; the kubelet's own journal is everything it
+actually did, including internal bookkeeping no Event ever surfaces.
+Reach for it when a Pod's behavior doesn't match what its Events say, or
+when the question is about the node's kubelet itself rather than any
+one Pod on it.
+
 ### metrics-server: resource metrics, not logs or events
 
 **Why**: `kubectl top` depends on metrics-server, a separate aggregated
@@ -165,13 +241,14 @@ actually pulled its image and started, the apiservice registered and
 
 ### Common failure-mode diagnosis
 
-**Why**: two habits cover most real troubleshooting: read `kubectl
+**Why**: a few habits cover most real troubleshooting: read `kubectl
 describe`'s Events section before anything else (it's populated by the
 exact controllers/kubelet actions that got a Pod to its current state,
-in order), and don't trust a "deprecated" or "planned for removal" claim
-as evidence something was actually removed on schedule - verify against
-the live cluster, the same principle this entire tutorial has followed
-throughout.
+in order); know that `describe`'s output shape changes depending on how
+you invoke it, not just what it's describing; and don't trust a
+"deprecated" or "planned for removal" claim as evidence something was
+actually removed on schedule - verify against the live cluster, the
+same principle this entire tutorial has followed throughout.
 
 **Example**: a container that exits immediately, and a claim worth
 checking rather than assuming:
@@ -223,3 +300,42 @@ deprecation notice. "Deprecated" is a schedule someone announced, not a
 guarantee of what actually happened - the only way to know which is
 true for a given claim is to check a live cluster, exactly as this
 tutorial has done for every chapter before this one.
+
+One more habit worth checking rather than assuming: `kubectl describe`
+against an exact Pod name and `kubectl describe` against a `-l` selector
+that happens to match exactly one Pod look identical, which makes it
+easy to assume selector-based `describe` always works the same way. It
+doesn't - the moment a selector matches more than one Pod, the Events
+section is silently dropped from the output entirely, not merged,
+truncated, or labeled per-Pod:
+
+```
+kubectl run observability-demo-selector-a --image=busybox:1.36 --restart=Never --labels="app=observability-demo-selector" -- sh -c "sleep 3600"
+kubectl run observability-demo-selector-b --image=busybox:1.36 --restart=Never --labels="app=observability-demo-selector" -- sh -c "sleep 3600"
+
+kubectl describe pod observability-demo-selector-a | grep -A5 "^Events:"
+kubectl describe pod -l app=observability-demo-selector | grep -c "^Events:"
+```
+
+**Expected output**: the exact-name `describe` shows a normal Events
+section; the selector-based `describe`, run against the same two Pods,
+contains zero occurrences of the `Events:` header at all - not an empty
+section, the header itself is absent:
+
+```
+Events:
+  Type    Reason     Age   From               Message
+  ----    ------     ----  ----               -------
+  Normal  Scheduled  6s    default-scheduler  Successfully assigned default/observability-demo-selector-a to k8s-lab-default-worker2
+  Normal  Pulling    4s    kubelet            spec.containers{observability-demo-selector-a}: Pulling image "busybox:1.36"
+```
+
+```
+0
+```
+
+Both Pods have real events - this isn't a case of nothing having
+happened yet. It's specifically the multi-Pod selector path through
+`kubectl describe` that drops them. Reach for an exact Pod name, not a
+label selector, whenever the Events section itself is what you actually
+need to see.

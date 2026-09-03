@@ -4,6 +4,30 @@ Running log of problems hit while building/operating this lab and what
 fixed them. Newest entries at the top. Not a changelog of features -
 `git log` covers that. This is for things that cost time figuring out.
 
+## 2026-09-03 - `kubectl describe -l <selector>` silently drops the Events section when the selector matches multiple Pods
+
+While writing the tutorial's failure-diagnosis material
+(`docs/tutorial/10-observability.md`), assumed `kubectl describe pod -l
+<selector>` behaves like `kubectl describe pod <name>` with the
+convenience of not having to know the exact Pod name - both print the
+same per-Pod sections for whatever Pods they resolve to. Checked live
+rather than assuming: created two Pods sharing a label
+(`observability-demo-selector-a`/`-b`, both `app=observability-demo-selector`),
+confirmed `kubectl describe pod observability-demo-selector-a` (exact
+name) prints a normal Events section, then ran `kubectl describe pod -l
+app=observability-demo-selector` (matches both Pods) - the `Events:`
+header is entirely absent from the output, not empty or truncated, just
+never printed, for either Pod, even though both genuinely have events.
+
+This isn't a "no events yet" situation - both Pods have real
+`Scheduled`/`Pulling`/etc. events, visible individually. It's
+specifically the multi-Pod selector path through `kubectl describe`
+that drops the section. Single-Pod selectors (one that happens to match
+exactly one Pod) print Events normally, which makes the gap easy to
+miss until a selector broadens to match more than one - lesson: reach
+for an exact Pod name, not a label selector, whenever the Events
+section itself is what's actually needed.
+
 ## 2026-08-30 - kind's "config_path patch not needed on kind v0.27.0+ images" doesn't hold for this repo's pinned image
 
 While building the tutorial's developer-journey chapter
