@@ -169,3 +169,50 @@ Error from server (NotFound): Unable to list "example.com/v1, Resource=crontabs"
 That's a `NotFound` on the resource type itself (`get crontabs.example.com`
 in the error), not on any particular object - the apiserver no longer
 knows what a `CronTab` is at all.
+
+### When a CRD isn't enough: the aggregated-API-server alternative
+
+**Why**: every mechanism this chapter covered assumes a CRD is the
+right tool - it's worth naming the point where that assumption breaks
+down, even without standing anything up to prove it. A CRD gets a lot
+of mileage for free - the apiserver stores instances in
+etcd, validates them against `openAPIV3Schema`, and gives them
+`kubectl get`/`apply`/`describe`/`watch` for nothing beyond the
+manifest above. That storage model is also its ceiling: every
+instance is a plain Kubernetes object in etcd, so a CRD can't back
+itself with a different datastore, implement custom logic in the read
+path (computed fields, joins against something else, request-time
+authorization beyond RBAC), or expose semantics etcd's object model
+doesn't fit - none of which a schema, however elaborate, can add.
+
+The alternative is registering a real, separate API server as an
+**aggregated API** rather than a new type inside the existing one - the
+apiserver's aggregation layer (always present, not something a CRD opts
+into or out of) proxies requests for a given API group to whatever
+backend `Service` an `APIService` object points at, and that backend
+can be anything that speaks the Kubernetes API conventions, backed by
+whatever storage or logic it wants. One related flag worth knowing by
+name: `--enable-aggregator-routing` (confirmed live via `kubectl exec
+-n kube-system kube-apiserver-<node> -- kube-apiserver --help`) doesn't
+turn the aggregation layer on or off - it only changes how the
+apiserver reaches a registered backend, routing directly to its Pod
+endpoint IPs instead of through the backend Service's cluster IP.
+This isn't a hypothetical: `kubectl top`
+(chapter 10) already depends on exactly this mechanism - metrics-server
+isn't a CRD or a built-in type, it's a separate binary registered via an
+`APIService`, and `kubectl get apiservice v1beta1.metrics.k8s.io` on
+this very cluster shows it live, `service.name: metrics-server` proxying
+the whole `metrics.k8s.io` group to a Deployment that computes its
+answers on the fly from kubelet `/stats` scrapes rather than reading
+anything back out of etcd.
+
+This is a real, higher-cost decision, not a strictly-better upgrade path
+from CRDs: an aggregated API server is another process to build, ship,
+version, and keep available - if it's down, that entire API group is
+unreachable, unlike a CRD's instances, which stay readable straight out
+of etcd regardless of whether any controller watching them is healthy.
+The rule of thumb: reach for a CRD (with a controller, if anything
+should act on it) by default, and only reach for the aggregation layer
+when the requirement genuinely can't be expressed as "structured data in
+etcd plus a controller watching it" - custom storage, computed/virtual
+responses, or semantics the object model itself can't represent.
