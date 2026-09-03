@@ -276,3 +276,97 @@ And a direct connection attempt on the Docker host, bypassing
 ```
 curl: (7) Failed to connect to localhost:18081 after 0 ms: Could not connect to server
 ```
+
+### The repository model: installing someone else's published chart
+
+**Why**: `helm create` (above) is this chapter's answer to *authoring* a
+chart - it deliberately never depends on a third-party chart repository
+being available, which is exactly why it was chosen after Bitnami's
+catalog was deprecated. But most real Helm usage isn't authoring; it's
+*consuming* a chart someone else already published and maintains. That
+needs a different mechanism: `helm repo add <name> <url>` registers a
+chart repository (an index the client fetches once and caches, not
+anything that touches the cluster), after which `helm search repo`
+searches that local cache and `helm install <release> <repo>/<chart>`
+installs straight from it, without ever cloning or scaffolding
+anything locally. This tutorial keeps both approaches side by side
+deliberately: `helm create` for a chart you're building yourself, the
+repo model for a chart someone else already built.
+
+`helm search repo` and `helm search hub` look similar but query
+different things: `search repo` only ever searches repositories you've
+already `helm repo add`-ed locally, while `search hub` queries Artifact
+Hub - a public index of charts across many publishers - directly over
+the network, with no `repo add` step at all. `search hub` is the faster
+way to *discover* a chart; `repo add` is what you need before you can
+actually `helm install` one from a specific repository.
+
+**Example**: `stefanprodan/podinfo` is used here for the same reason
+`helm create` was chosen over `bitnami/*` above - it's a small,
+actively-maintained, freely-available chart, not a deprecated one:
+
+```
+helm search hub podinfo
+helm repo add podinfo https://stefanprodan.github.io/podinfo
+helm repo list
+helm search repo podinfo
+```
+
+**Expected output**: `search hub` finds it (and a second, unrelated
+`podinfo` chart from a different publisher) with no local setup at all;
+`repo add` registers the repository, and only then does `search repo`
+find anything - it has nothing to search before that:
+
+```
+URL                                                    CHART VERSION   APP VERSION   DESCRIPTION
+https://artifacthub.io/packages/helm/podinfo/podinfo   6.15.0          6.15.0        Podinfo Helm chart for Kubernetes
+https://artifacthub.io/packages/helm/flagger/podinfo   6.1.4           6.1.3         Flagger canary deployment demo application
+
+"podinfo" has been added to your repositories
+
+NAME      URL
+podinfo   https://stefanprodan.github.io/podinfo
+
+NAME              CHART VERSION   APP VERSION   DESCRIPTION
+podinfo/podinfo   6.15.0          6.15.0        Podinfo Helm chart for Kubernetes
+```
+
+Installing from the repository is the same `helm install` already used
+above, just pointed at `<repo>/<chart>` instead of a local directory:
+
+```
+helm install helm-demo-podinfo podinfo/podinfo
+kubectl get pods -l app.kubernetes.io/name=helm-demo-podinfo
+```
+
+**Expected output**: a real, running Pod, from a chart this session
+never downloaded or unpacked by hand:
+
+```
+NAME: helm-demo-podinfo
+STATUS: deployed
+REVISION: 1
+
+NAME                                  READY   STATUS    RESTARTS   AGE
+helm-demo-podinfo-5cff48488c-8j5zb    1/1     Running   0          25s
+```
+
+**Repo hygiene**: `helm repo add` is a purely local, client-side
+registration - it doesn't touch the cluster, and a stale entry left
+behind is silent clutter, not a running risk, but a one-off repository
+added for a single chart is worth removing once you're done rather than
+letting the local cache accumulate repos that are never searched again:
+
+```
+helm uninstall helm-demo-podinfo
+helm repo remove podinfo
+helm repo list
+```
+
+**Expected output**:
+
+```
+release "helm-demo-podinfo" uninstalled
+"podinfo" has been removed from your repositories
+no repositories to show
+```
