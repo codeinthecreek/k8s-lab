@@ -75,6 +75,30 @@ manifest; kubelet is the only thing watching
 `/etc/kubernetes/manifests/`, and it reacts to file changes there
 directly.
 
+**A risk callout worth stating plainly before touching anything**:
+this is a genuinely higher-risk hands-on edit than chapter 12's own
+capstone example of live control-plane surgery - the etcd
+data-directory swap that chapter verifies save-and-restore-to-a-new-
+directory for, but deliberately only *describes* rather than performs
+against the running lab cluster. Editing a static pod manifest in
+place is a step further than that: it's live-editing the file that
+defines a currently-running control-plane component, not working
+against a separate scratch directory next to it. It's still the right
+call to actually perform here, for three concrete reasons this
+section leans on: the revert path is fully documented and exercised
+later in this same section (not just asserted), kubelet's own reconcile
+loop restarts the static pod automatically on every manifest write -
+no separate "apply the change" step to get wrong - and the manifest
+edit itself touches no cluster state (etcd, any object this tutorial
+has created) at all, only which scheduler binary configuration this
+one control-plane node's kube-scheduler container starts with; the
+demo Deployments this section applies afterward to prove the effect
+are ordinary, disposable objects like any other chapter's, not part of
+what makes the edit itself risky. Chapter 12
+chose description over demonstration specifically because a live etcd
+directory swap risks the cluster's actual data; nothing here carries
+that same downside.
+
 **Before editing anything, back up the current manifest - but not into
 `/etc/kubernetes/manifests/` itself.** kubelet treats every file in that
 directory as a static pod definition; a backup copy left in the same
