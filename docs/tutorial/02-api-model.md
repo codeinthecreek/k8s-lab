@@ -212,6 +212,46 @@ apiserver host port for this cluster (see chapter 1's node-as-container
 model and the top-level README's architecture diagram) - it'll differ
 per cluster, the request shape won't.
 
+That per-cluster port has a side effect worth knowing about: kubectl
+doesn't re-fetch a server's OpenAPI/discovery data (which API groups,
+resources, and shortnames exist - what makes a command like `kubectl
+get ep` resolve to `endpoints` at all) on every invocation. It caches
+that under `~/.kube/cache/discovery/<server-address>/`, one directory
+per host:port it has ever talked to. The cache key is the address, not
+any notion of "which cluster this is," so recreating a kind cluster -
+which gets a fresh, randomly-assigned apiserver port each time, same as
+above - doesn't reuse or invalidate the old entry. It just leaves it
+behind and starts a new one:
+
+```
+kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}'
+ls ~/.kube/cache/discovery/
+```
+
+**Expected output**: the live cluster's own address has a directory,
+but it's one of many - `34415`, the exact port this section's own trace
+above hit, is still sitting there too, stale, left over from before
+this cluster's apiserver last restarted on a new port:
+
+```
+https://127.0.0.1:36673
+
+127.0.0.1_34415
+127.0.0.1_34503
+127.0.0.1_35045
+127.0.0.1_36541
+127.0.0.1_36673
+127.0.0.1_38431
+...
+```
+
+None of those stale directories cause wrong answers - a cache miss just
+means kubectl re-fetches discovery data on the next call against that
+address, the same as if the cache didn't exist yet. They're disk
+clutter, not a correctness problem, and safe to delete wholesale
+(`rm -rf ~/.kube/cache/discovery/*`) any time; kubectl rebuilds
+whatever it needs on the next command.
+
 ### `kubectl apply`: diff and PATCH, not blind create
 
 **Why**: `apply` is not "delete and recreate from this file," and it's
