@@ -1,12 +1,16 @@
 # 6. Specialized workloads: StatefulSet, DaemonSet, Job, and CronJob
 
-Chapter 3 covered the Pod/ReplicaSet/Deployment line, where every
-replica is interchangeable - any one of them can be killed and
-replaced without anyone needing to track which, and none of them has
-an identity beyond a random name suffix, and where the scheduler picks
-freely among whichever nodes have room rather than any Pod caring which
-node it lands on. This chapter covers four workload shapes that are
-deliberate exceptions to that model. First, StatefulSet, for workloads
+This chapter is about the workloads an interchangeable replica can't
+serve: something that needs its own stable identity and storage,
+something that needs a guaranteed presence on every node, or work
+that's meant to finish rather than run forever. Chapter 3 covered the
+Pod/ReplicaSet/Deployment line, where every replica is interchangeable
+- any one of them can be killed and replaced without anyone needing to
+track which, and none of them has an identity beyond a random name
+suffix, and where the scheduler picks freely among whichever nodes have
+room rather than any Pod caring which node it lands on. This chapter
+covers four workload shapes that are deliberate exceptions to that
+model. First, StatefulSet, for workloads
 that need stable per-replica identity and storage instead of
 interchangeability - now that chapter 4's PersistentVolumeClaims and
 chapter 5's Service model are both in place, the two mechanisms

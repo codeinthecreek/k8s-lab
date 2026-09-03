@@ -110,6 +110,10 @@ exactly why chapter 9 checks NetworkPolicy enforcement on kindnetd *and*
 Calico separately rather than assuming one CNI's behavior generalizes to
 every other.
 
+With Pods now reachable by IP at all, the rest of this chapter builds
+the stable-address layer on top of that - starting with the most
+common Service type.
+
 ### ClusterIP: the default, cluster-internal Service
 
 **Why**: most traffic in a cluster is Pod-to-Pod, and `ClusterIP` (the
@@ -251,6 +255,10 @@ own):
 }
 ```
 
+Names now resolve to ClusterIPs from inside the cluster; the next two
+subsections turn to the opposite problem - reaching a Service from
+outside it.
+
 ### NodePort: exposing a Service on every node's own IP
 
 **Why**: `NodePort` builds on `ClusterIP` (every `NodePort` Service gets
@@ -344,6 +352,9 @@ ingress-nginx-controller   LoadBalancer   10.96.198.99   <pending>     80:32579/
 NAME                         TYPE           CLUSTER-IP      EXTERNAL-IP   PORT(S)        AGE
 services-demo-loadbalancer   LoadBalancer   10.96.211.147   <pending>     80:32718/TCP   12s
 ```
+
+That's the last of the IP-based Service types - the next one drops the
+virtual IP entirely in favor of a pure DNS-level indirection.
 
 ### ExternalName: a Service that's really just a DNS alias
 

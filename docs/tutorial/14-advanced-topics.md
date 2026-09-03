@@ -330,6 +330,9 @@ NAME                         READY   STATUS    RESTARTS   AGE   NODE
 scheduling-profiles-sanity   1/1     Running   0          5s    k8s-lab-default-worker2
 ```
 
+With the cluster back to its default scheduler profile, this chapter
+moves on to an entirely unrelated, version-gated topic.
+
 ## Dynamic Resource Allocation (`resource.k8s.io`)
 
 **This section is optional.** Everything through "What's live and
@@ -539,6 +542,10 @@ depends on them once the driver is gone - delete them directly:
 kubectl delete resourceslices --all
 ```
 
+That's the last of this chapter's API-level material - the remaining
+two topics are tooling built on top of everything already covered,
+starting with a web UI.
+
 ## Cluster web UI: Headlamp
 
 **Why**: `kubernetes/dashboard`, the project's original web UI, was
@@ -569,6 +576,9 @@ ClusterRoleBinding by default for its own ServiceAccount - fine for this
 lab, but exactly the kind of over-broad grant chapter 9's RBAC section
 already covered how to narrow (a `Role`/`RoleBinding` scoped to specific
 namespaces and verbs instead of the default `ClusterRoleBinding`).
+
+From a cluster web UI, this closing topic moves to the opposite end of
+the tooling spectrum - extending `kubectl` itself on the command line.
 
 ## krew: a kubectl plugin manager
 

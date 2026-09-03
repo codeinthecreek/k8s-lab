@@ -184,6 +184,8 @@ A `ClusterRoleBinding` referencing this same `security-demo-cm-reader`
 `ClusterRole` would have returned `200` for both namespaces - the rules
 are identical either way, only the binding decides the blast radius.
 
+Authorization's covered; the chapter turns back to authentication next.
+
 ### x509 client-certificate authentication: the identity behind every `kubectl` command so far
 
 **Why**: the bearer token earlier in this chapter was one authentication
@@ -326,6 +328,9 @@ Starting to serve on 127.0.0.1:8765
 403
 ```
 
+Identity and authorization are both covered now - the chapter turns to
+the third, independent pipeline stage named in its opening: admission.
+
 ### Admission control: Pod Security Admission
 
 **Why**: **PodSecurityPolicy was removed entirely in 1.25.** Its stable
@@ -436,6 +441,11 @@ apiserver's own container image, not on the node's filesystem -
 answering fundamentally different "where does this run" questions, and
 only one of them lands inside the container that actually has
 `kube-apiserver` on its `$PATH`.
+
+That aside was a detour into admission internals - the chapter closes
+with a mechanism outside the authentication/authorization/admission
+pipeline entirely, one that depends on the CNI covered back in chapter
+5.
 
 ### NetworkPolicy: accepted by the API regardless of whether anything enforces it
 

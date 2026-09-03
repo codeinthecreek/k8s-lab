@@ -46,6 +46,10 @@ NAME                     STATUS   ROLES    AGE   VERSION
 k8s-lab-default-worker   Ready    <none>   17h   v1.36.1
 ```
 
+With that selector mechanism established, the next two subsections -
+node affinity, then pod affinity/anti-affinity - both extend it to
+answer where a Pod is allowed to land.
+
 ### Node affinity: constraining where a Pod can be scheduled
 
 **Why**: `nodeSelector` (the older, simpler mechanism - still valid, a
@@ -273,6 +277,11 @@ node/k8s-lab-default-worker untainted
 
 Error from server (NotFound): pods "scheduling-demo-notoleration-pod" not found
 ```
+
+That's the last of the placement mechanisms - the rest of this chapter
+shifts from where a Pod can land to how much of a node it's allowed to
+consume once it's there, and from a single Pod's own spec to limits
+enforced across an entire namespace.
 
 ### Resource requests and limits
 

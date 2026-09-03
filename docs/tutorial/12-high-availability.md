@@ -123,6 +123,10 @@ https://172.19.0.5:2379 is healthy: successfully committed proposal: took = 4.93
 https://172.19.0.7:2379 is healthy: successfully committed proposal: took = 4.869108ms
 ```
 
+etcd's own membership is covered - the next question is how anything
+outside etcd, like `kubectl` itself, actually reaches one of these three
+apiservers in the first place.
+
 ### Envoy fronts the apiservers - the kubeconfig points at the LB, not a node
 
 **Why**: with more than one control-plane node, kind stands up an
@@ -183,6 +187,11 @@ $ curl -s http://${LB_IP}:10000/clusters | head
 
 returns real per-backend stats for all 3 apiservers - used again in the
 next section to watch a backend go unhealthy in real time.
+
+That covers how this topology is structurally built - etcd membership,
+quorum, and the load balancer in front of it. The rest of the chapter
+turns to what actually happens when a piece of it breaks or is
+operated on.
 
 ### Node-failure semantics: `docker stop` is the honest simulation
 
@@ -503,6 +512,10 @@ should have.)
 `kubectl get nodes` stayed at 5/5 `Ready` throughout every step above
 - restoring into a separate directory genuinely never touched the
 live, running etcd member.
+
+Backup and restore covers recovering from disaster - the last
+operational skill this topology exists to support is the routine case:
+moving the whole cluster to a newer version.
 
 ### Cluster upgrades
 
