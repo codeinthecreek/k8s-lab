@@ -2,14 +2,16 @@
 
 Every `kubectl` command and every in-cluster request this tutorial has
 run so far went through the same three independent checks: who is this
-(authentication), are they allowed to do this specific thing
-(authorization), and does this specific request get accepted as-is or
-modified/rejected (admission control) - each stage entirely independent
-of the others, so success at one says nothing about the next. This
-chapter covers identity (ServiceAccounts), the authorization layer
-(RBAC), the admission layer (Pod Security Admission), and NetworkPolicy
-- which depends on chapter 5's networking model and needs its own
-CNI-enforcement caveat front and center.
+(authentication - bearer tokens are one mechanism, not the only one),
+are they allowed to do this specific thing (authorization), and does
+this specific request get accepted as-is or modified/rejected
+(admission control) - each stage entirely independent of the others, so
+success at one says nothing about the next. This chapter covers
+identity (ServiceAccounts and x509 client certificates), the
+authorization layer (RBAC, namespaced and cluster-scoped), the
+admission layer (Pod Security Admission and the admission-plugin flags
+behind it), and NetworkPolicy - which depends on chapter 5's networking
+model and needs its own CNI-enforcement caveat front and center.
 
 ### ServiceAccounts: identity for talking to the API
 
@@ -101,6 +103,228 @@ The error message names the exact identity, verb, resource, and API
 group that was missing - RBAC denials are specific, not a generic
 "forbidden."
 
+Both objects above were namespaced - the `Role` only exists inside
+`default`, and the `RoleBinding` binding it to `security-demo-sa` lives
+there too. The next subsection covers the cluster-scoped half of RBAC:
+`ClusterRole` and `ClusterRoleBinding`.
+
+### ClusterRole and ClusterRoleBinding: cluster-scoped rules, binding-scoped effect
+
+**Why**: a `Role` only exists inside one namespace - there's no way to
+write a single `Role` that grants a permission across every namespace.
+A `ClusterRole` is the same rule syntax with no namespace of its own,
+which makes it usable two different ways depending on what binds it: a
+`ClusterRoleBinding` grants its rules everywhere, cluster-wide, while an
+ordinary namespaced `RoleBinding` can *also* reference a `ClusterRole`
+as its `roleRef` - and when it does, the grant is scoped down to just
+that one namespace, exactly like binding a `Role` would be. This is the
+standard way built-in ClusterRoles like `view`/`edit`/`admin` get reused
+per-namespace without writing the same rules out as a `Role` in every
+namespace that needs them.
+
+This cluster's own kubeadm-generated admin identity is a live example of
+the cluster-wide side of this, worth looking at before writing a new
+one:
+
+```
+kubectl get clusterrolebinding kubeadm:cluster-admins -o yaml
+```
+
+**Expected output** (on this cluster, kubeadm/Kubernetes v1.36.1):
+
+```
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kubeadm:cluster-admins
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+- apiGroup: rbac.authorization.k8s.io
+  kind: Group
+  name: kubeadm:cluster-admins
+```
+
+A plain `ClusterRoleBinding`, granting the built-in `cluster-admin`
+`ClusterRole` to a `Group` subject, exactly like any other RBAC grant in
+this chapter - nothing about it is magic. (There's a second,
+older-style `ClusterRoleBinding` alongside it, `cluster-admin` bound to
+the `system:masters` group, which the next subsection comes back to.)
+
+**Example**: grant `security-demo-sa` a *new* permission - reading
+ConfigMaps - using a `ClusterRole`, but bind it with a namespaced
+`RoleBinding` instead of a `ClusterRoleBinding`, then check the same
+identity against two different namespaces:
+
+```
+kubectl apply -f tutorial/examples/security/clusterrole-other-ns.yaml
+kubectl apply -f tutorial/examples/security/clusterrole-cm-reader.yaml
+kubectl apply -f tutorial/examples/security/clusterrole-rolebinding.yaml
+curl -sS -k -H "Authorization: Bearer $TOKEN" "$APISERVER/api/v1/namespaces/default/configmaps" -o /dev/null -w '%{http_code}\n'
+curl -sS -k -H "Authorization: Bearer $TOKEN" "$APISERVER/api/v1/namespaces/security-demo-clusterrole-other/configmaps" -o /dev/null -w '%{http_code}\n'
+```
+
+**Expected output**: `200` in `default`, where the `RoleBinding` lives,
+`403` in the other namespace - the exact same `ClusterRole`, the exact
+same identity, but the grant doesn't follow the identity cluster-wide
+because it was bound with a `RoleBinding`, not a `ClusterRoleBinding`:
+
+```
+namespace/security-demo-clusterrole-other created
+clusterrole.rbac.authorization.k8s.io/security-demo-cm-reader created
+rolebinding.rbac.authorization.k8s.io/security-demo-cm-reader-binding created
+200
+403
+```
+
+A `ClusterRoleBinding` referencing this same `security-demo-cm-reader`
+`ClusterRole` would have returned `200` for both namespaces - the rules
+are identical either way, only the binding decides the blast radius.
+
+### x509 client-certificate authentication: the identity behind every `kubectl` command so far
+
+**Why**: the bearer token earlier in this chapter was one authentication
+mechanism, deliberately swapped in with `curl` to make it visible. Every
+plain `kubectl` command run in this entire tutorial has been
+authenticating a completely different way the whole time, via the
+`client-certificate-data`/`client-key-data` fields already sitting in
+`~/.kube/config`. The apiserver's authenticator reads two fields off
+that client certificate's subject and turns them directly into an
+identity: the Subject **CN** becomes the username, and every Subject
+**O** becomes a group membership - no lookup against any user database,
+because there isn't one. This is also exactly what the previous
+subsection's `kubeadm:cluster-admins` `ClusterRoleBinding` was waiting
+for: a `Group` subject named `kubeadm:cluster-admins` only means
+something because some certificate somewhere carries `O=kubeadm:cluster-admins`
+in its subject.
+
+**Example**: decode this cluster's own admin client certificate out of
+the current kubeconfig and read its subject directly:
+
+```
+kubectl config view --raw -o jsonpath='{.users[0].user.client-certificate-data}' | base64 -d | openssl x509 -noout -subject -issuer
+```
+
+**Expected output** (on this cluster, kubeadm/Kubernetes v1.36.1):
+
+```
+subject=O=kubeadm:cluster-admins, CN=kubernetes-admin
+issuer=CN=kubernetes
+```
+
+`CN=kubernetes-admin` is the username every prior chapter's `kubectl`
+commands have been running as, and `O=kubeadm:cluster-admins` is the
+group the earlier `ClusterRoleBinding` grants `cluster-admin` to - two
+fields in a certificate subject, mapped straight into the RBAC model
+this chapter has been building up. (Older kubeadm versions put this
+same admin cert's `O` in the hardcoded `system:masters` group instead -
+this cluster's second `cluster-admin` `ClusterRoleBinding`, seen in the
+previous subsection's output, is that older path kept around
+separately, not replaced.)
+
+**Why the CA key matters**: `issuer=CN=kubernetes` names the cluster CA
+that signed this cert - and that CA's *private* key (`ca.key` on the
+control-plane node, never distributed to clients) is the actual root of
+trust for every identity claim above. Anyone holding it can mint a new
+client cert with any CN and any O they choose - `CN=attacker,
+O=kubeadm:cluster-admins` would be accepted exactly as readily as the
+real admin cert, because the apiserver has no way to distinguish
+"legitimately issued" from "correctly signed by the CA it trusts." RBAC
+decides what an identity can do; the CA key decides who gets to *become*
+an identity at all, which is why guarding it matters more than any
+individual RBAC grant in this chapter.
+
+### Curling the API with a client certificate, the x509 counterpart to the bearer-token example
+
+**Why**: the ServiceAccount subsection proved `kubectl` is just an HTTPS
+client by swapping in a bearer token; the same trick works for x509 -
+extract the three PEM values kubeconfig already carries
+(`client-certificate-data`, `client-key-data`,
+`certificate-authority-data`) and hand them to `curl` directly, no
+`kubectl` or its credential-loading machinery involved at all.
+
+**Example**: decode all three fields to files, then use them with
+`curl --cert`/`--key`/`--cacert` in place of `-k` and a bearer token:
+
+```
+kubectl config view --raw -o jsonpath='{.users[0].user.client-certificate-data}' | base64 -d > /tmp/admin.crt
+kubectl config view --raw -o jsonpath='{.users[0].user.client-key-data}' | base64 -d > /tmp/admin.key
+kubectl config view --raw -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' | base64 -d > /tmp/ca.crt
+curl -sS --cert /tmp/admin.crt --key /tmp/admin.key --cacert /tmp/ca.crt "$APISERVER/api/v1/namespaces/default/pods" -o /dev/null -w '%{http_code}\n'
+```
+
+**Expected output**: `200` - a real, working request against the live
+API server, authenticated entirely by the certificate's signature and
+subject fields, with no bearer token and no `-k` skip-verification flag
+needed since `--cacert` gives `curl` the actual cluster CA to validate
+against:
+
+```
+200
+```
+
+### `kubectl proxy`: the same URL, a different auth path entirely
+
+**Why**: every direct `curl` example in this chapter has required
+manually solving two separate problems at once - proving identity
+(`-H "Authorization: Bearer ..."` or `--cert`/`--key`) and establishing
+TLS trust (`-k` to skip it, or `--cacert` to do it properly).
+`kubectl proxy` collapses both into kubectl's own already-configured
+kubeconfig: it opens a local, unauthenticated HTTP endpoint and forwards
+every request to the real apiserver using whatever identity and TLS
+trust `kubectl` itself already has configured. That makes it a
+deliberately blunt diagnostic tool - if a direct `curl` against the API
+is failing and it's unclear whether that's a TLS/connectivity problem or
+an RBAC problem, routing the same request through `kubectl proxy`
+instead answers the question: connectivity is no longer in play at all,
+so anything that still fails there is genuinely RBAC, and anything that
+now succeeds was never an RBAC problem in the first place.
+
+**Example**: first, a direct `curl` against the real apiserver URL with
+no cert flags and no `-k` - the kind of mistake that looks like the API
+is unreachable:
+
+```
+curl -sS "$APISERVER/api/v1/namespaces/default/pods" -o /dev/null -w '%{http_code}\n'
+```
+
+**Expected output**: not an HTTP status code at all - `curl` refuses to
+even complete the TLS handshake, because the apiserver's certificate is
+signed by this cluster's own CA, which isn't in `curl`'s default trust
+store:
+
+```
+curl: (60) SSL certificate OpenSSL verify result: unable to get local issuer certificate (20)
+000
+```
+
+Now the same resource, through `kubectl proxy`, impersonating the
+low-privilege `security-demo-sa` identity from earlier in this chapter
+so the RBAC boundary stays visible instead of masked by admin
+permissions:
+
+```
+kubectl proxy --as=system:serviceaccount:default:security-demo-sa --port=8765 &
+curl -sS "http://127.0.0.1:8765/api/v1/namespaces/default/pods" -o /dev/null -w '%{http_code}\n'
+curl -sS "http://127.0.0.1:8765/apis/apps/v1/namespaces/default/deployments" -o /dev/null -w '%{http_code}\n'
+kill %1
+```
+
+**Expected output**: `200` for Pods - proving the connectivity failure
+above was never about the API being unreachable, only about the direct
+`curl` invocation's own missing TLS trust - and `403` for Deployments,
+the exact same RBAC boundary from the ServiceAccount/RBAC subsections
+earlier, now unambiguous because `kubectl proxy` already solved
+connectivity:
+
+```
+Starting to serve on 127.0.0.1:8765
+200
+403
+```
+
 ### Admission control: Pod Security Admission
 
 **Why**: **PodSecurityPolicy was removed entirely in 1.25.** Its stable
@@ -164,6 +388,53 @@ Nothing about this is a `restricted`-policy bug - the Pod spec is fully
 compliant, admission did its job correctly. The image just wasn't built
 to run as anyone but root, which `restricted` admission has no way to
 know or check.
+
+### Aside: admission-plugin flags only show additions to a compiled-in default set
+
+PSA is one admission plugin among many, and it's already enabled by
+default - nothing in the example above turned it on. `kube-apiserver`'s
+`--enable-admission-plugins` flag doesn't take a full replacement list;
+its own `--help` text says so explicitly: "admission plugins that should
+be enabled **in addition to** default enabled ones." This cluster's own
+static-pod manifest only sets `--enable-admission-plugins=NodeRestriction`
+- everything else PSA relies on (`PodSecurity` itself, `ServiceAccount`,
+`LimitRanger`, and a dozen more) is already running, compiled in, before
+that flag is even evaluated:
+
+```
+docker exec k8s-lab-default-control-plane cat /etc/kubernetes/manifests/kube-apiserver.yaml | grep admission-plugins
+```
+
+```
+    - --enable-admission-plugins=NodeRestriction
+```
+
+**A caution on where `--help` is actually reachable**: `kube-apiserver`
+doesn't run as a process on the kind node's own root filesystem - it's
+a separate static-pod container, so `docker exec` into the node
+container itself can't find the binary at all:
+
+```
+docker exec k8s-lab-default-control-plane which kube-apiserver
+```
+
+produces no output - nothing is on `$PATH` there. Reaching `--help`
+means going through the pod, not the node:
+
+```
+kubectl exec -n kube-system kube-apiserver-k8s-lab-default-control-plane -- kube-apiserver --help 2>&1 | grep -A1 "^\s*--enable-admission-plugins"
+```
+
+```
+      --enable-admission-plugins strings             admission plugins that should be enabled in addition to default enabled ones (NamespaceLifecycle, LimitRanger, ServiceAccount, TaintNodesByCondition, PodSecurity, Priority, DefaultTolerationSeconds, DefaultStorageClass, StorageObjectInUseProtection, PodGroupProtection, PersistentVolumeClaimResize, RuntimeClass, CertificateApproval, CertificateSigning, ClusterTrustBundleAttest, CertificateSubjectRestriction, DefaultIngressClass, PodTopologyLabels, PodGroupWorkloadExists, NodeDeclaredFeatureValidator, JobValidation, PodResizeValidator, MutatingAdmissionPolicy, MutatingAdmissionWebhook, ValidatingAdmissionPolicy, ValidatingAdmissionWebhook, ResourceQuota). ...
+```
+
+`kubectl exec` reaches it because the binary lives inside the
+apiserver's own container image, not on the node's filesystem -
+`docker exec` into the node and `kubectl exec` into the pod are
+answering fundamentally different "where does this run" questions, and
+only one of them lands inside the container that actually has
+`kube-apiserver` on its `$PATH`.
 
 ### NetworkPolicy: accepted by the API regardless of whether anything enforces it
 

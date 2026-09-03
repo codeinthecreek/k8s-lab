@@ -1,0 +1,7 @@
+# A second namespace with no RoleBinding of its own - used to prove
+# clusterrole-rolebinding.yaml's grant doesn't reach here. See
+# docs/tutorial/09-security.md.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: security-demo-clusterrole-other

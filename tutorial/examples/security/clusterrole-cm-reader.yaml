@@ -1,0 +1,11 @@
+# A ClusterRole - cluster-scoped as an object, but its effective scope
+# depends entirely on how it's bound (see clusterrole-rolebinding.yaml).
+# See docs/tutorial/09-security.md.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: security-demo-cm-reader
+rules:
+- apiGroups: [""]
+  resources: ["configmaps"]
+  verbs: ["get", "list", "watch"]
