@@ -4,6 +4,39 @@ Running log of problems hit while building/operating this lab and what
 fixed them. Newest entries at the top. Not a changelog of features -
 `git log` covers that. This is for things that cost time figuring out.
 
+## 2026-09-03 - kubeadm's admin client cert is no longer in `system:masters` - it's a real, inspectable RBAC group
+
+While writing the tutorial's x509 client-certificate material
+(`docs/tutorial/09-security.md`), went to decode this cluster's own
+admin client cert out of kubeconfig to demonstrate CN-to-username and
+O-to-group mapping, expecting the classic `O=system:masters` - the
+hardcoded superuser group most existing Kubernetes material assumes
+kubeadm-generated admin certs carry. Checked live rather than assuming:
+
+```
+kubectl config view --raw -o jsonpath='{.users[0].user.client-certificate-data}' | base64 -d | openssl x509 -noout -subject
+```
+
+```
+subject=O=kubeadm:cluster-admins, CN=kubernetes-admin
+```
+
+Not `system:masters`. `kubectl get clusterrolebinding` shows both
+groups actually exist on this cluster (kubeadm/Kubernetes v1.36.1)
+side by side: the old hardcoded `cluster-admin` -> `system:masters`
+`ClusterRoleBinding` is still present, but a second one,
+`kubeadm:cluster-admins` -> `cluster-admin`, is what the generated admin
+cert's `O` actually points at now. Same effective permissions
+(`cluster-admin` either way), but reached through an ordinary,
+deletable, auditable `ClusterRoleBinding` rather than the
+apiserver-hardcoded `system:masters` bypass group.
+
+Scoped this finding to what's actually confirmed: true for this
+cluster's kubeadm/Kubernetes v1.36.1, not asserted as "recent kubeadm"
+in general without checking exactly which release changed it - the
+lesson from this same file's other entries about not writing
+version-behavior claims from memory applies here too.
+
 ## 2026-09-03 - `kubectl describe -l <selector>` silently drops the Events section when the selector matches multiple Pods
 
 While writing the tutorial's failure-diagnosis material
