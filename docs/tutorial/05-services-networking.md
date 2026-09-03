@@ -156,6 +156,43 @@ Same three addresses, same order - if a Pod were replaced right now, the
 EndpointSlice would update within moments and the ClusterIP itself
 wouldn't change at all.
 
+**A note on `endpointslice` vs. `endpoints`**: the older, singular
+`Endpoints` object (`kubectl get endpoints` / its `ep` shortname) is
+still readable, but the API tells you not to reach for it. (This
+subsection and the two after it in this chapter - the CoreDNS
+`rewrite` example and `ExternalName` - were captured against the same
+backend Deployment and Service recreated fresh for this pass, so the
+Pod addresses and ClusterIP below differ from the earlier ClusterIP/
+EndpointSlice capture above; nothing about the mechanism changed,
+addresses are just assigned on creation the way chapter 3 covered.)
+
+```
+kubectl get endpoints services-demo-clusterip
+```
+
+```
+Warning: v1 Endpoints is deprecated in v1.33+; use discovery.k8s.io/v1 EndpointSlice
+NAME                      ENDPOINTS                                      AGE
+services-demo-clusterip   10.244.1.22:80,10.244.2.22:80,10.244.2.23:80   9s
+```
+
+That's not a cosmetic rename - it's a scaling fix. A `Service` gets
+exactly one `Endpoints` object, so every address for every backend Pod
+lives in that single object; one Pod added or removed anywhere in a
+large Service means the *entire* object, every address in it, gets
+rewritten and re-sent to every node's kube-proxy watching it - cost
+proportional to total backend count on every single change.
+`EndpointSlice` shards the same addresses across multiple slice objects
+(capped by default at 100 addresses per slice), each with its own
+`kubernetes.io/service-name` label tying it back to the Service (used
+in this chapter's `-l kubernetes.io/service-name=...` selector above)
+- so a churn event on one Pod only touches the one slice it belongs to,
+not a copy of the whole Service's endpoint list. `endpoints`/`ep` still
+work today (the warning above is a deprecation notice, not a removal),
+which is exactly why it's worth knowing to reach for `endpointslice`
+instead rather than only learning about the switch when `ep` eventually
+stops working.
+
 ### CoreDNS: turning Service names into addresses
 
 **Why**: a ClusterIP is stable, but still just a number - CoreDNS is
@@ -211,6 +248,63 @@ own):
     reload
     loadbalance
 }
+```
+
+**Extending the Corefile: the `rewrite` plugin**
+
+**Why**: the Corefile above is a plugin chain, evaluated top to bottom
+per query, and `rewrite` is a plugin like any other in it - it can
+rewrite an incoming query's name before the `kubernetes` plugin ever
+sees it, and (with `answer name`) rewrite the *response* name back
+before it reaches the client. A concrete use: aliasing an old Service
+name to a new one during a rename or migration, so clients that still
+ask for the old name keep working without every one of them being
+updated in lockstep with the rename. This is a cluster-wide DNS-layer
+alias, evaluated for every query CoreDNS handles - different from this
+chapter's later `ExternalName` Service, which is one specific object a
+client has to already know to ask for.
+
+**Example**: `tutorial/examples/services-networking/corefile-rewrite.txt`
+adds one `rewrite` block ahead of the existing `kubernetes` plugin,
+aliasing a `legacy-backend` name onto the real
+`services-demo-clusterip` Service used throughout this chapter (back up
+the live Corefile first - unlike this tutorial's other ConfigMaps, this
+one ships with the cluster itself rather than being an example object
+this repo creates, so there's nothing else to reapply if it's worth
+keeping the stock version around):
+
+```
+kubectl get configmap coredns -n kube-system -o jsonpath='{.data.Corefile}' > /tmp/coredns-corefile-original.txt
+kubectl create configmap coredns -n kube-system \
+  --from-file=Corefile=tutorial/examples/services-networking/corefile-rewrite.txt \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n kube-system delete pod -l k8s-app=kube-dns
+kubectl run services-demo-rewrite-check --image=busybox:1.36 --restart=Never --rm -i --command -- nslookup legacy-backend.default.svc.cluster.local
+```
+
+**Expected output**: `legacy-backend.default.svc.cluster.local` was
+never created as a Service or anything else - it only resolves at all
+because of the rewrite rule, and it resolves straight to
+`services-demo-clusterip`'s real ClusterIP, no CNAME visible in the
+answer (the `answer name` line is what rewrites the *response* name
+back to what was asked, rather than leaving a
+`legacy-backend...  CNAME  services-demo-clusterip...` chain the way
+`ExternalName` does below):
+
+```
+Server:		10.96.0.10
+Address:	10.96.0.10:53
+
+Name:	legacy-backend.default.svc.cluster.local
+Address: 10.96.214.43
+```
+
+Restore the stock Corefile the same way, from the backup taken above,
+once done experimenting:
+
+```
+kubectl create configmap coredns -n kube-system --from-file=Corefile=/tmp/coredns-corefile-original.txt --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n kube-system delete pod -l k8s-app=kube-dns
 ```
 
 ### NodePort: exposing a Service on every node's own IP
@@ -306,6 +400,58 @@ ingress-nginx-controller   LoadBalancer   10.96.198.99   <pending>     80:32579/
 NAME                         TYPE           CLUSTER-IP      EXTERNAL-IP   PORT(S)        AGE
 services-demo-loadbalancer   LoadBalancer   10.96.211.147   <pending>     80:32718/TCP   12s
 ```
+
+### ExternalName: a Service that's really just a DNS alias
+
+**Why**: every Service type covered so far has a `spec.selector`
+picking out real backend Pods and an EndpointSlice tracking their IPs.
+`ExternalName` has neither - it's a pure DNS-level indirection, a
+CNAME under a different name. Resolving `<name>.<namespace>.svc.
+cluster.local` returns a `CNAME` to whatever hostname
+`spec.externalName` names, not an IP CoreDNS looked up from an
+EndpointSlice at all. The use case that shape fits well: giving
+something outside the cluster (a managed database, a third-party API)
+an in-cluster name that looks and resolves like any other Service,
+so application config never has to hardcode the real external
+hostname - or the reverse, this chapter's example below, aliasing one
+in-cluster name onto another during a migration.
+
+**Example**: `tutorial/examples/services-networking/externalname-service.yaml`
+points `services-demo-externalname` at this chapter's own
+`services-demo-clusterip.default.svc.cluster.local`, standing in for an
+external host without needing one:
+
+```
+kubectl apply -f tutorial/examples/services-networking/externalname-service.yaml
+kubectl get svc services-demo-externalname
+kubectl run services-demo-externalname-check --image=busybox:1.36 --restart=Never --rm -i --command -- nslookup services-demo-externalname.default.svc.cluster.local
+```
+
+**Expected output**: no `CLUSTER-IP` at all - `<none>`, not even the
+`<pending>` seen for `LoadBalancer` above, since there's no virtual IP
+to allocate for a pure alias - and the DNS answer is a literal `CNAME`
+record naming the real Service, resolved one hop further to that
+Service's actual ClusterIP:
+
+```
+NAME                         TYPE           CLUSTER-IP   EXTERNAL-IP                                         PORT(S)   AGE
+services-demo-externalname   ExternalName   <none>       services-demo-clusterip.default.svc.cluster.local   <none>    0s
+
+services-demo-externalname.default.svc.cluster.local	canonical name = services-demo-clusterip.default.svc.cluster.local
+Name:	services-demo-clusterip.default.svc.cluster.local
+Address: 10.96.214.43
+```
+
+kube-proxy is never involved here - there's no EndpointSlice, no
+virtual IP to program into any node's packet handling, just a CNAME
+CoreDNS returns straight from the Service object's spec. That's also
+its sharpest limitation: kube-proxy can front `ClusterIP`/`NodePort`/
+`LoadBalancer` with real IPs because it can see `spec.selector` and
+Endpoints, but a plain DNS client following a `CNAME` to a name outside
+`cluster.local` needs *its own* working DNS resolution to finish the
+lookup - `ExternalName` doesn't manufacture connectivity to something
+otherwise unreachable, it only saves in-cluster config from hardcoding
+which real hostname is behind an in-cluster-looking name.
 
 ### Ingress: L7 routing on top of a Service
 
