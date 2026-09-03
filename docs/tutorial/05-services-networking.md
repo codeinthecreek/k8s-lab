@@ -12,7 +12,8 @@ starts one layer lower than Services, though - with the CNI plugin that
 gives every Pod its IP in the first place, since Services and kube-proxy
 both take that IP's existence for granted - then covers the Service
 types in the order you'd actually reach for them, then Ingress as an L7
-layer built on top of a Service rather than a replacement for one.
+(application layer - HTTP paths and hostnames) layer built on top of a
+Service rather than a replacement for one.
 
 ### CNI: how a Pod gets an IP in the first place
 
@@ -159,12 +160,12 @@ wouldn't change at all.
 **A note on `endpointslice` vs. `endpoints`**: the older, singular
 `Endpoints` object (`kubectl get endpoints` / its `ep` shortname) is
 still readable, but the API tells you not to reach for it. (This
-subsection and the two after it in this chapter - the CoreDNS
-`rewrite` example and `ExternalName` - were captured against the same
-backend Deployment and Service recreated fresh for this pass, so the
-Pod addresses and ClusterIP below differ from the earlier ClusterIP/
-EndpointSlice capture above; nothing about the mechanism changed,
-addresses are just assigned on creation the way chapter 3 covered.)
+subsection, `ExternalName` below, and this chapter's closing CoreDNS
+`rewrite` section were all captured against the same backend Deployment
+and Service recreated fresh for this pass, so the Pod addresses and
+ClusterIP below differ from the earlier ClusterIP/EndpointSlice capture
+above; nothing about the mechanism changed, addresses are just assigned
+on creation the way chapter 3 covered.)
 
 ```
 kubectl get endpoints services-demo-clusterip
@@ -248,63 +249,6 @@ own):
     reload
     loadbalance
 }
-```
-
-**Extending the Corefile: the `rewrite` plugin**
-
-**Why**: the Corefile above is a plugin chain, evaluated top to bottom
-per query, and `rewrite` is a plugin like any other in it - it can
-rewrite an incoming query's name before the `kubernetes` plugin ever
-sees it, and (with `answer name`) rewrite the *response* name back
-before it reaches the client. A concrete use: aliasing an old Service
-name to a new one during a rename or migration, so clients that still
-ask for the old name keep working without every one of them being
-updated in lockstep with the rename. This is a cluster-wide DNS-layer
-alias, evaluated for every query CoreDNS handles - different from this
-chapter's later `ExternalName` Service, which is one specific object a
-client has to already know to ask for.
-
-**Example**: `tutorial/examples/services-networking/corefile-rewrite.txt`
-adds one `rewrite` block ahead of the existing `kubernetes` plugin,
-aliasing a `legacy-backend` name onto the real
-`services-demo-clusterip` Service used throughout this chapter (back up
-the live Corefile first - unlike this tutorial's other ConfigMaps, this
-one ships with the cluster itself rather than being an example object
-this repo creates, so there's nothing else to reapply if it's worth
-keeping the stock version around):
-
-```
-kubectl get configmap coredns -n kube-system -o jsonpath='{.data.Corefile}' > /tmp/coredns-corefile-original.txt
-kubectl create configmap coredns -n kube-system \
-  --from-file=Corefile=tutorial/examples/services-networking/corefile-rewrite.txt \
-  --dry-run=client -o yaml | kubectl apply -f -
-kubectl -n kube-system delete pod -l k8s-app=kube-dns
-kubectl run services-demo-rewrite-check --image=busybox:1.36 --restart=Never --rm -i --command -- nslookup legacy-backend.default.svc.cluster.local
-```
-
-**Expected output**: `legacy-backend.default.svc.cluster.local` was
-never created as a Service or anything else - it only resolves at all
-because of the rewrite rule, and it resolves straight to
-`services-demo-clusterip`'s real ClusterIP, no CNAME visible in the
-answer (the `answer name` line is what rewrites the *response* name
-back to what was asked, rather than leaving a
-`legacy-backend...  CNAME  services-demo-clusterip...` chain the way
-`ExternalName` does below):
-
-```
-Server:		10.96.0.10
-Address:	10.96.0.10:53
-
-Name:	legacy-backend.default.svc.cluster.local
-Address: 10.96.214.43
-```
-
-Restore the stock Corefile the same way, from the backup taken above,
-once done experimenting:
-
-```
-kubectl create configmap coredns -n kube-system --from-file=Corefile=/tmp/coredns-corefile-original.txt --dry-run=client -o yaml | kubectl apply -f -
-kubectl -n kube-system delete pod -l k8s-app=kube-dns
 ```
 
 ### NodePort: exposing a Service on every node's own IP
@@ -455,10 +399,11 @@ which real hostname is behind an in-cluster-looking name.
 
 ### Ingress: L7 routing on top of a Service
 
-**Why**: a Service (any type above) is L4 - IPs and ports, no awareness
-of HTTP paths or hostnames. Running one `LoadBalancer` or `NodePort` per
-application doesn't scale past a handful of services, and doesn't give
-you host/path-based routing at all. Ingress is a separate API for
+**Why**: a Service (any type above) is L4 (transport layer) - IPs and
+ports, no awareness of HTTP paths or hostnames. Running one
+`LoadBalancer` or `NodePort` per application doesn't scale past a
+handful of services, and doesn't give you host/path-based routing at
+all. Ingress is a separate API for
 exactly that: rules mapping hostnames/paths to backend Services, with
 TLS termination, all fronted by a single entry point. Critically, an
 `Ingress` **object** is inert on its own - it does nothing without a
@@ -504,3 +449,66 @@ controller itself, so no `ADDRESS` ever arrives on any Ingress it's
 serving, no matter how long you wait - worth knowing so a blank
 `ADDRESS` column doesn't get mistaken for something broken when `curl`
 already proves the routing itself works.
+
+### Extending the Corefile: the `rewrite` plugin
+
+**This section is optional.** It comes back to CoreDNS (introduced
+earlier in this chapter) after all four Service types and Ingress have
+been covered, since it's a CoreDNS-configuration detour rather than
+another Service type of its own - nothing later in this tutorial
+depends on it.
+
+**Why**: the CoreDNS Corefile shown earlier in this chapter is a plugin
+chain, evaluated top to bottom per query, and `rewrite` is a plugin
+like any other in it - it can rewrite an incoming query's name before
+the `kubernetes` plugin ever sees it, and (with `answer name`) rewrite
+the *response* name back before it reaches the client. A concrete use:
+aliasing an old Service name to a new one during a rename or migration,
+so clients that still ask for the old name keep working without every
+one of them being updated in lockstep with the rename. This is a
+cluster-wide DNS-layer alias, evaluated for every query CoreDNS handles
+- different from this chapter's `ExternalName` Service above, which is
+one specific object a client has to already know to ask for.
+
+**Example**: `tutorial/examples/services-networking/corefile-rewrite.txt`
+adds one `rewrite` block ahead of the existing `kubernetes` plugin,
+aliasing a `legacy-backend` name onto the real
+`services-demo-clusterip` Service used throughout this chapter (back up
+the live Corefile first - unlike this tutorial's other ConfigMaps, this
+one ships with the cluster itself rather than being an example object
+this repo creates, so there's nothing else to reapply if it's worth
+keeping the stock version around):
+
+```
+kubectl get configmap coredns -n kube-system -o jsonpath='{.data.Corefile}' > /tmp/coredns-corefile-original.txt
+kubectl create configmap coredns -n kube-system \
+  --from-file=Corefile=tutorial/examples/services-networking/corefile-rewrite.txt \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n kube-system delete pod -l k8s-app=kube-dns
+kubectl run services-demo-rewrite-check --image=busybox:1.36 --restart=Never --rm -i --command -- nslookup legacy-backend.default.svc.cluster.local
+```
+
+**Expected output**: `legacy-backend.default.svc.cluster.local` was
+never created as a Service or anything else - it only resolves at all
+because of the rewrite rule, and it resolves straight to
+`services-demo-clusterip`'s real ClusterIP, no CNAME visible in the
+answer (the `answer name` line is what rewrites the *response* name
+back to what was asked, rather than leaving a
+`legacy-backend...  CNAME  services-demo-clusterip...` chain the way
+`ExternalName` does above):
+
+```
+Server:		10.96.0.10
+Address:	10.96.0.10:53
+
+Name:	legacy-backend.default.svc.cluster.local
+Address: 10.96.214.43
+```
+
+Restore the stock Corefile the same way, from the backup taken above,
+once done experimenting:
+
+```
+kubectl create configmap coredns -n kube-system --from-file=Corefile=/tmp/coredns-corefile-original.txt --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n kube-system delete pod -l k8s-app=kube-dns
+```
