@@ -216,3 +216,11 @@ should act on it) by default, and only reach for the aggregation layer
 when the requirement genuinely can't be expressed as "structured data in
 etcd plus a controller watching it" - custom storage, computed/virtual
 responses, or semantics the object model itself can't represent.
+
+There's a third way a new API group can show up, distinct from both of
+the above: compiled directly into `kube-apiserver` itself, neither a CRD
+nor a separate aggregated process. `resource.k8s.io` (Dynamic Resource
+Allocation, chapter 14) is exactly that - present unconditionally on any
+Kubernetes 1.34+ cluster, nothing to register or apply, and inert
+without a driver actually using it. Worth keeping distinct from both
+mechanisms this chapter covers.

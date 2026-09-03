@@ -1,0 +1,24 @@
+# Same two profiles as scheduler-config-naive.yaml, with one addition:
+# PodTopologySpread is disabled for bin-packing-scheduler's score phase.
+# Every profile gets PodTopologySpread's default system-wide soft spread
+# constraint (topologyKey: kubernetes.io/hostname) unless it's explicitly
+# removed, and at its default weight it outscores NodeResourcesFit's
+# MostAllocated signal - this is what actually makes bin-packing visible.
+apiVersion: kubescheduler.config.k8s.io/v1
+kind: KubeSchedulerConfiguration
+clientConnection:
+  kubeconfig: /etc/kubernetes/scheduler.conf
+leaderElection:
+  leaderElect: true
+profiles:
+- schedulerName: default-scheduler
+- schedulerName: bin-packing-scheduler
+  pluginConfig:
+  - name: NodeResourcesFit
+    args:
+      scoringStrategy:
+        type: MostAllocated
+  plugins:
+    score:
+      disabled:
+      - name: PodTopologySpread

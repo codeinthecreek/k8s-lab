@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: scheduling-profiles-pack-demo
+spec:
+  replicas: 6
+  selector:
+    matchLabels:
+      app: scheduling-profiles-pack-demo
+  template:
+    metadata:
+      labels:
+        app: scheduling-profiles-pack-demo
+    spec:
+      schedulerName: bin-packing-scheduler
+      containers:
+      - name: busybox
+        image: busybox
+        command: ["sleep", "3600"]
+        resources:
+          requests:
+            cpu: "1"
+            memory: "64Mi"

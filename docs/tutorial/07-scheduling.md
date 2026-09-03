@@ -10,7 +10,11 @@ affinity/anti-affinity, taints/tolerations); the resource requests/limits that
 shape *how much* of a node a Pod is allowed to consume once it's there;
 and, closing the loop from a single Pod to an entire namespace,
 ResourceQuota and LimitRange - the mechanism that turns a namespace from
-a bare naming scope into an actual resource boundary.
+a bare naming scope into an actual resource boundary. This chapter
+covers what a Pod spec can say to influence *its own* placement;
+configuring the scheduler itself - `KubeSchedulerConfiguration`,
+multiple named Scheduling Profiles selected via `spec.schedulerName` -
+is a separate topic, covered in chapter 14.
 
 ### Labels and selectors: one mechanism, used everywhere
 

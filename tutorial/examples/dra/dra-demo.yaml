@@ -1,0 +1,41 @@
+# Adapted from kubernetes-sigs/dra-example-driver's own demo
+# (demo/examples/basic-resourceclaimtemplate), tag v0.4.0 - a
+# ResourceClaimTemplate requesting one device from the driver's
+# gpu.example.com DeviceClass, and a Pod that claims it via
+# spec.resourceClaims and a matching container-level resources.claims
+# entry. Requires the dra-example-driver Helm chart installed first -
+# see ch14, this section is explicitly optional.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: dra-demo
+---
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  namespace: dra-demo
+  name: dra-demo-single-gpu
+spec:
+  spec:
+    devices:
+      requests:
+      - name: gpu
+        exactly:
+          deviceClassName: gpu.example.com
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  namespace: dra-demo
+  name: dra-demo-pod
+spec:
+  containers:
+  - name: ctr0
+    image: busybox
+    command: ["sleep", "3600"]
+    resources:
+      claims:
+      - name: gpu
+  resourceClaims:
+  - name: gpu
+    resourceClaimTemplateName: dra-demo-single-gpu

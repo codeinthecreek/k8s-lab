@@ -1,0 +1,19 @@
+# A second named scheduling profile, "bin-packing-scheduler", scoring
+# NodeResourcesFit with MostAllocated instead of the compiled-in default
+# (LeastAllocated). This version deliberately leaves every other default
+# plugin, including PodTopologySpread, untouched - see ch14 for why that's
+# not enough on its own to produce visible bin-packing.
+apiVersion: kubescheduler.config.k8s.io/v1
+kind: KubeSchedulerConfiguration
+clientConnection:
+  kubeconfig: /etc/kubernetes/scheduler.conf
+leaderElection:
+  leaderElect: true
+profiles:
+- schedulerName: default-scheduler
+- schedulerName: bin-packing-scheduler
+  pluginConfig:
+  - name: NodeResourcesFit
+    args:
+      scoringStrategy:
+        type: MostAllocated

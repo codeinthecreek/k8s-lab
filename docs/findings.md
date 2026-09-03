@@ -4,6 +4,45 @@ Running log of problems hit while building/operating this lab and what
 fixed them. Newest entries at the top. Not a changelog of features -
 `git log` covers that. This is for things that cost time figuring out.
 
+## 2026-09-03 - A custom `NodeResourcesFit` scoring strategy alone doesn't bin-pack - `PodTopologySpread`'s default weight outvotes it
+
+While writing the tutorial's scheduler-configuration material
+(`docs/tutorial/14-advanced-topics.md`), built a second named scheduling
+profile (`bin-packing-scheduler`) scoring `NodeResourcesFit` with
+`MostAllocated` instead of the compiled-in default (`LeastAllocated`),
+expecting six replicas under that profile to consolidate onto one of
+the `default` profile's two workers. Checked live rather than assuming:
+they split three and three across both workers - indistinguishable from
+the same Deployment scheduled under the untouched `default-scheduler`
+profile.
+
+The cause: overriding one plugin's `pluginConfig` only changes how that
+plugin scores a node - every other plugin in the profile's default
+`multiPoint` list is still active unless explicitly removed.
+`PodTopologySpread` applies a system-wide soft spread constraint
+(`topologyKey: kubernetes.io/hostname`) to every Pod automatically, no
+`topologySpreadConstraints` needed in the Pod spec, and at its
+compiled-in default weight (2, versus `NodeResourcesFit`'s 1 - confirmed
+by dumping the profile's own effective config via `kube-scheduler
+--write-config-to`) it was outscoring the bin-packing signal on every
+placement decision. Disabling `PodTopologySpread` for that one profile's
+`score` phase (`plugins.score.disabled`) - leaving it untouched for
+`default-scheduler` - is what actually produced the six-on-one-node
+result the naive config implied but never delivered.
+
+Also hit while iterating on this: a backup copy of the edited static pod
+manifest, saved as `kube-scheduler.yaml.orig-backup` inside
+`/etc/kubernetes/manifests/` itself rather than elsewhere, silently won
+a race against the real edit - kubelet watches every file in that
+directory as a static pod definition, and both files declared the same
+`metadata.name: kube-scheduler`. The scheduler kept running its
+original flags for several checks afterward before `crictl inspect`'s
+reported container args (not just the manifest file's own text) caught
+the discrepancy. Lesson generalized in the chapter now: back up a static
+pod manifest outside `/etc/kubernetes/manifests/`, and verify a live
+edit landed by inspecting the running container's actual args, not by
+re-reading the file you just wrote.
+
 ## 2026-09-03 - kubeadm's admin client cert is no longer in `system:masters` - it's a real, inspectable RBAC group
 
 While writing the tutorial's x509 client-certificate material
