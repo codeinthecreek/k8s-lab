@@ -66,7 +66,7 @@ data-specialized-workloads-demo-sts-1   Bound    pvc-473c729b-a436-4e4b-ba98-c6e
 ```
 
 The fully-qualified name resolves straight to that specific Pod's IP,
-not a load-balanced VIP - the point that actually matters for "why
+not a load-balanced VIP (virtual IP) - the point that actually matters for "why
 StatefulSet": each ordinal gets its own durable address, not a shared
 one:
 
@@ -225,10 +225,11 @@ specialized-workloads-demo-ds-72hm4   1/1     Running   0          8s    k8s-lab
 specialized-workloads-demo-ds-ksmpj   1/1     Running   0          8s    k8s-lab-default-worker
 ```
 
-Adding the same toleration kindnet and kube-proxy already carry gets the
-third Pod onto the control-plane node too, and `DESIRED` updates itself
-to match - nobody told it "3" directly, it recomputed from node count
-plus toleration:
+Adding the same toleration kindnet and kube-proxy already carry (chapter
+7 covers taints and tolerations as a general Pod-placement mechanism,
+not just this DaemonSet-specific use of one) gets the third Pod onto the
+control-plane node too, and `DESIRED` updates itself to match - nobody
+told it "3" directly, it recomputed from node count plus toleration:
 
 ```
 kubectl patch daemonset specialized-workloads-demo-ds --type=json \

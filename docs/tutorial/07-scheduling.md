@@ -280,7 +280,9 @@ Error from server (NotFound): pods "scheduling-demo-notoleration-pod" not found
 a node needs that much allocatable capacity free before a Pod can land
 there at all, regardless of what the Pod ends up actually using.
 `limits` is a runtime ceiling enforced by the container runtime via
-cgroups, checked independently of scheduling. The two together produce
+cgroups (Linux kernel control groups - the mechanism that actually
+constrains a process's resource usage), checked independently of
+scheduling. The two together produce
 a Pod's **QoS class**: `Guaranteed` (every container's requests equal
 its limits), `Burstable` (requests set but lower than limits, or only
 some containers have both), `BestEffort` (neither set at all) - which

@@ -20,7 +20,8 @@ model and needs its own CNI-enforcement caveat front and center.
 implicitly and invisibly in every earlier chapter's Pods. Since
 **1.24**, a ServiceAccount no longer gets an auto-generated long-lived
 token Secret the moment it's created - `kubectl create token
-<sa-name>` mints a short-lived JWT on demand (default ~1h TTL) via the
+<sa-name>` mints a short-lived JWT (JSON Web Token) on demand (default
+~1h TTL) via the
 TokenRequest API instead. Material written assuming "just `kubectl get
 secret` to find the SA's token" predates this and no longer works that
 way.

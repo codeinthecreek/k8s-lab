@@ -222,9 +222,11 @@ exists for you to bind to instead.
 actually backing the storage, so start with the simplest possible
 backend - a directory on a node's own filesystem - before bringing in a
 real network filesystem. `tutorial/examples/config-storage/hostpath-pv.yaml`
-uses a `hostPath` volume, pinned via `nodeAffinity` to one specific node
-(a `hostPath` directory only exists on the one node it names, unlike NFS
-below), and `tutorial/examples/config-storage/hostpath-pvc.yaml` again
+uses a `hostPath` volume, pinned via `nodeAffinity` (`matchExpressions`
+here; chapter 7 covers node affinity as a Pod-placement mechanism in its
+own right) to one specific node (a `hostPath` directory only exists on
+the one node it names, unlike NFS below), and
+`tutorial/examples/config-storage/hostpath-pvc.yaml` again
 sets `storageClassName: ""` explicitly:
 
 ```
