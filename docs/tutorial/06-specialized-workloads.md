@@ -257,6 +257,118 @@ specialized-workloads-demo-ds-rtm9p   1/1     Running   0          88s   k8s-lab
 specialized-workloads-demo-ds-t9vnt   1/1     Running   0          13s   k8s-lab-default-worker
 ```
 
+### DaemonSet's other update strategy: OnDelete
+
+**Why**: the rolling replacement just seen - one Terminating/
+ContainerCreating pair at a time after the toleration patch - is
+`RollingUpdate`, DaemonSet's default `updateStrategy`: a template
+change gets pushed out to existing Pods automatically. `OnDelete` is
+the other option. A template change still updates the DaemonSet object
+and still gets recorded as a new revision, but no running Pod is
+touched until something deletes it - whether that's an operator by
+hand, a node drain, or anything else that makes that specific Pod go
+away. That makes `OnDelete` the deliberate choice for a node-level
+daemon where controlling exactly *when* each node crosses over matters
+more than getting there fast - staging a rollout node by node on a
+schedule the operator picks, rather than however quickly
+`RollingUpdate`'s `maxUnavailable` would otherwise churn through every
+node.
+
+**Example**: reset back to the base two-Pod DaemonSet first - the
+toleration and 3-node spread from the previous example aren't needed
+here and would just make the output below harder to read - then switch
+it to `OnDelete` and change its Pod template:
+
+```
+kubectl delete daemonset specialized-workloads-demo-ds
+kubectl apply -f tutorial/examples/specialized-workloads/daemonset.yaml
+kubectl patch daemonset specialized-workloads-demo-ds --type=json \
+  -p '[{"op":"replace","path":"/spec/updateStrategy","value":{"type":"OnDelete"}}]'
+kubectl patch daemonset specialized-workloads-demo-ds --type=json \
+  -p '[{"op":"replace","path":"/spec/template/spec/containers/0/command","value":["sh","-c","sleep 7200"]}]'
+kubectl get daemonset specialized-workloads-demo-ds
+```
+
+**Expected output**: `UP-TO-DATE` drops to `0` even though every Pod is
+still `READY`/`AVAILABLE` - the controller knows the running Pods no
+longer match the current template, it's just not doing anything about
+that on its own under `OnDelete`:
+
+```
+NAME                            DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR   AGE
+specialized-workloads-demo-ds   2         2         2       0            2           <none>          15s
+```
+
+Delete one Pod by hand and only that one picks up the new template:
+
+```
+kubectl delete pod specialized-workloads-demo-ds-cj84g
+kubectl get daemonset specialized-workloads-demo-ds
+kubectl get pods -l app=specialized-workloads-demo-ds -o jsonpath='{range .items[*]}{.metadata.name}{": "}{.spec.containers[0].command}{"\n"}{end}'
+```
+
+**Expected output**: one Pod on the new `sleep 7200` command, the other
+still on `sleep 3600`, `UP-TO-DATE` at `1` of `2` - a DaemonSet with two
+of its own Pods on two different revisions of the same template at the
+same time. This is the *expected* shape of an in-progress `OnDelete`
+rollout, not a stuck or broken DaemonSet: `UP-TO-DATE` catching up to
+`DESIRED` one Pod at a time, exactly as each one gets deleted, is the
+mechanism working as designed - there's no timer or background process
+that will ever finish this rollout on its own, because finishing it is
+specifically left to whoever (or whatever) deletes the remaining Pods:
+
+```
+NAME                            DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR   AGE
+specialized-workloads-demo-ds   2         2         2       1            2           <none>          74s
+
+specialized-workloads-demo-ds-5rd7p: ["sh","-c","sleep 7200"]
+specialized-workloads-demo-ds-l2fds: ["sh","-c","sleep 3600"]
+```
+
+DaemonSet supports the same `kubectl rollout history`/`rollout undo`
+tooling chapter 3 introduced for Deployments, tracked the same way -
+just backed by `ControllerRevision` objects instead of the
+per-revision ReplicaSets a Deployment uses (`kubectl get
+controllerrevision -l app=specialized-workloads-demo-ds` shows one per
+revision, and every Pod above carries a `controller-revision-hash`
+label pointing at which one it's currently running). `rollout undo`
+still only touches the DaemonSet's spec, not any Pod - under
+`OnDelete` that's the same one-more-inert-revision situation as any
+other template change:
+
+```
+kubectl rollout undo daemonset specialized-workloads-demo-ds
+kubectl rollout history daemonset specialized-workloads-demo-ds
+kubectl get pods -l app=specialized-workloads-demo-ds -o jsonpath='{range .items[*]}{.metadata.name}{": "}{.spec.containers[0].command}{"\n"}{end}'
+```
+
+**Expected output**: a new revision (`3`) recorded from the undo, the
+DaemonSet's spec back to `sleep 3600` - but both existing Pods keep
+running exactly what they were running the moment before, still split
+across two different revisions, because `rollout undo` is still just a
+spec write and this DaemonSet is still `OnDelete`:
+
+```
+daemonset.apps/specialized-workloads-demo-ds
+REVISION  CHANGE-CAUSE
+2         <none>
+3         <none>
+
+specialized-workloads-demo-ds-5rd7p: ["sh","-c","sleep 7200"]
+specialized-workloads-demo-ds-l2fds: ["sh","-c","sleep 3600"]
+```
+
+Deleting the one Pod that was still on the now-abandoned `sleep 7200`
+revision converges the DaemonSet back to a single revision, `UP-TO-DATE`
+returning to `2`:
+
+```
+$ kubectl delete pod specialized-workloads-demo-ds-5rd7p
+$ kubectl get daemonset specialized-workloads-demo-ds
+NAME                            DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR   AGE
+specialized-workloads-demo-ds   2         2         2       2            2           <none>          114s
+```
+
 ### Workloads that run to completion: Job and CronJob
 
 **Why**: not every workload should stay running. A batch computation, a
