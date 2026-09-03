@@ -386,21 +386,44 @@ demonstrate against a running lab cluster than the snapshot/restore
 mechanism itself is, so this section verifies save-and-restore-to-a-
 new-directory live, and describes the live swap as the documented next
 step rather than performing it here. One version-specific wrinkle
-worth stating rather than assuming away: on this cluster's etcd
-(3.6.0), `snapshot status` and `snapshot restore` no longer live under
-`etcdctl` at all - they moved to a separate offline tool, `etcdutl`,
-shipped in the same container. `etcdctl` still does `snapshot save`
-(it talks to a live etcd member over its client API); the other two
-operate on a file with etcd stopped, which is a fundamentally
-different (offline) operation - splitting them into a separate binary
-makes that distinction explicit rather than implicit.
+worth stating rather than assuming away: on this cluster's etcd,
+`snapshot status` and `snapshot restore` no longer live under
+`etcdctl` at all - that split happened at the 3.6 minor version, not
+tied to any one patch release - they moved to a separate offline tool,
+`etcdutl`, shipped in the same container. `etcdctl` still does
+`snapshot save` (it talks to a live etcd member over its client API);
+the other two operate on a file with etcd stopped, which is a
+fundamentally different (offline) operation - splitting them into a
+separate binary makes that distinction explicit rather than implicit.
 
-**Example**: take a real snapshot from one etcd member with
-`etcdctl`, then use `etcdutl` - not `etcdctl` - for status and
-restore into a separate directory, to prove the file is genuinely
-valid and restorable:
+A second wrinkle, worth resolving here before it looks like a
+contradiction later in this chapter: `etcdctl endpoint status` below
+reports two different-looking version numbers for the same running
+member - `VERSION` (the actual etcd binary release, `3.6.8` here) and
+`STORAGE VERSION` (a separately-tracked schema-compatibility marker
+etcd 3.6 introduced to gate safe downgrades, which stays pinned at its
+baseline, `3.6.0`, until something explicitly migrates it forward).
+`snapshot save` and `snapshot status` below report that same storage
+version under the label `VERSION`/`etcd-version`, not the binary
+version - so seeing `3.6.0` there and `3.6.8-0` out of `kubeadm upgrade
+plan` later in this chapter is two genuinely different, both-correct
+numbers for the identical running etcd member, not a discrepancy to
+resolve.
+
+**Example**: first, `etcdctl endpoint status` for a baseline - it's
+what the "two version numbers" wrinkle above is talking about - then a
+real snapshot from that same member with `etcdctl`, then use `etcdutl`
+- not `etcdctl` - for status and restore into a separate directory, to
+prove the file is genuinely valid and restorable:
 
 ```
+kubectl exec -n kube-system etcd-<a-control-plane-node-name> -- etcdctl \
+  --endpoints=https://127.0.0.1:2379 \
+  --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+  --cert=/etc/kubernetes/pki/etcd/server.crt \
+  --key=/etc/kubernetes/pki/etcd/server.key \
+  endpoint status -w table
+
 kubectl exec -n kube-system etcd-<a-control-plane-node-name> -- etcdctl \
   --cacert=/etc/kubernetes/pki/etcd/ca.crt \
   --cert=/etc/kubernetes/pki/etcd/server.crt \
@@ -414,8 +437,26 @@ kubectl exec -n kube-system etcd-<a-control-plane-node-name> -- etcdutl \
   snapshot restore /var/lib/etcd-backup-demo.db --data-dir=/var/lib/etcd-restore-test
 ```
 
-**Expected output**: the snapshot saves cleanly, and its `etcdutl`
-status check reports real numbers - not placeholders:
+**Expected output**: `endpoint status` puts `VERSION` and `STORAGE
+VERSION` side by side in the same row, so which number is which is
+unambiguous straight from etcd's own output, no inference required:
+
+```
+$ kubectl exec -n kube-system etcd-k8s-lab-ha-control-plane-control-plane -- etcdctl \
+  --endpoints=https://127.0.0.1:2379 --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+  --cert=/etc/kubernetes/pki/etcd/server.crt --key=/etc/kubernetes/pki/etcd/server.key \
+  endpoint status -w table
++------------------------+------------------+---------+-----------------+---------+--------+-----------------------+--------+-----------+------------+-----------+------------+--------------------+--------+--------------------------+-------------------+
+|        ENDPOINT        |        ID        | VERSION | STORAGE VERSION | DB SIZE | IN USE | PERCENTAGE NOT IN USE | QUOTA  | IS LEADER | IS LEARNER | RAFT TERM | RAFT INDEX | RAFT APPLIED INDEX | ERRORS | DOWNGRADE TARGET VERSION | DOWNGRADE ENABLED |
++------------------------+------------------+---------+-----------------+---------+--------+-----------------------+--------+-----------+------------+-----------+------------+--------------------+--------+--------------------------+-------------------+
+| https://127.0.0.1:2379 | 4c95f7dc5897214a |   3.6.8 |           3.6.0 |  2.5 MB | 2.5 MB |                    0% | 2.1 GB |      true |      false |         2 |       1424 |               1421 |        |                          |             false |
++------------------------+------------------+---------+-----------------+---------+--------+-----------------------+--------+-----------+------------+-----------+------------+--------------------+--------+--------------------------+-------------------+
+```
+
+The snapshot then saves cleanly, and its `etcdutl` status check reports
+real numbers - not placeholders - though its `VERSION` column is the
+table's *storage* version (`3.6.0`), not the binary version (`3.6.8`)
+that same table just showed:
 
 ```
 $ kubectl exec -n kube-system etcd-k8s-lab-ha-control-plane-control-plane -- etcdctl \
@@ -551,12 +592,20 @@ latest patch within the *current* minor series (`stable-1.36`) rather
 than jumping a minor version, which `kubeadm upgrade` never does in
 one step by design. Two rows are worth reading carefully rather than
 assuming they follow the same pattern as the rest: CoreDNS
-(`v1.14.2 -> v1.14.2`) and etcd (`3.6.8-0 -> 3.6.8-0`, matching the
-version this chapter's etcd backup/restore section already saw
-directly) both show **identical** current and target versions - no
-bump proposed for either, because a v1.36.1 -> v1.36.4 patch release
-doesn't necessarily require every bundled component to move in
-lockstep, only the ones the release actually changed. Nothing about
+(`v1.14.2 -> v1.14.2`) and etcd (`3.6.8-0 -> 3.6.8-0`) both show
+**identical** current and target versions - no bump proposed for
+either, because a v1.36.1 -> v1.36.4 patch release doesn't necessarily
+require every bundled component to move in lockstep, only the ones the
+release actually changed. `3.6.8-0` here is the real running etcd
+binary version (the trailing `-0` is the container image's own
+build-revision suffix, not part of etcd's semver) - the same number
+this chapter's etcd backup/restore section's `endpoint status` table
+already showed in its `VERSION` column, so `kubeadm` isn't reporting
+anything new. It's a genuinely different number from the `3.6.0` that
+same section's `snapshot save`/`snapshot status` output also showed,
+for the reason already covered there: that's etcd's separately-tracked
+storage version, not the binary version - the two numbers aren't
+expected to match, and don't need to. Nothing about
 running inside `kind` blocked or altered any of this: it's the
 identical live version-check a real cluster with internet access would
 get. What running `kubeadm upgrade apply v1.36.4` here would actually
