@@ -1,0 +1,21 @@
+# Binds quota-storage-pvc.yaml's PVC and writes a handful of bytes to
+# it - deliberately far less than the 1Gi declared - to check whether
+# the ResourceQuota's Used column tracks the declared claim or the
+# actual bytes on disk.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: scheduling-demo-quota-storage-pod
+  namespace: scheduling-demo-governance
+spec:
+  containers:
+  - name: writer
+    image: busybox:1.36
+    command: ["sh", "-c", "echo hi > /data/tiny.txt; sleep 3600"]
+    volumeMounts:
+    - name: data
+      mountPath: /data
+  volumes:
+  - name: data
+    persistentVolumeClaim:
+      claimName: scheduling-demo-quota-pvc

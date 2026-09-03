@@ -1,0 +1,22 @@
+# The opposite constraint, same topologyKey: requires scheduling onto a
+# node that does NOT already run a Pod labeled
+# app=scheduling-demo-colocate. This Pod carries no such label itself,
+# so it never conflicts with its own rule.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: scheduling-demo-antiaffinity-pod
+spec:
+  affinity:
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchExpressions:
+          - key: app
+            operator: In
+            values:
+            - scheduling-demo-colocate
+        topologyKey: kubernetes.io/hostname
+  containers:
+  - name: nginx
+    image: nginx:1.27

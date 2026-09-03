@@ -1,0 +1,15 @@
+# Plain pod, no special scheduling - lands wherever the scheduler picks
+# it (excluding the control-plane node's NoSchedule taint from chapter
+# 1). Its label is the target the pod-affinity and pod-anti-affinity
+# pods below match against - podAffinity/podAntiAffinity select on
+# *Pod* labels, not node labels, so this anchor never needs one.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: scheduling-demo-colocate-anchor
+  labels:
+    app: scheduling-demo-colocate
+spec:
+  containers:
+  - name: nginx
+    image: nginx:1.27

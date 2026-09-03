@@ -4,8 +4,9 @@ Every chapter so far has relied on the scheduler placing Pods somewhere
 sensible without saying anything about it. This chapter makes that
 placement decision itself the subject: the same label/selector mechanism
 already used for ReplicaSets (chapter 3) and Services (chapter 5),
-applied to nodes; the two ways to influence where a Pod can and can't
-land (affinity, taints/tolerations); the resource requests/limits that
+applied to nodes and, in a second form, to other Pods; the ways to
+influence where a Pod can and can't land (node affinity, pod
+affinity/anti-affinity, taints/tolerations); the resource requests/limits that
 shape *how much* of a node a Pod is allowed to consume once it's there;
 and, closing the loop from a single Pod to an entire namespace,
 ResourceQuota and LimitRange - the mechanism that turns a namespace from
@@ -99,6 +100,85 @@ Three nodes, two different reasons: the two workers didn't match the
 (impossible) affinity requirement, and the control-plane node was
 excluded for a completely different, pre-existing reason - its taint,
 unrelated to anything this chapter added.
+
+### Pod affinity and anti-affinity: co-locating or spreading by Pod labels
+
+**Why**: node affinity (above) matches **node** labels - it answers "which
+nodes qualify" with no regard for what else is running there. Pod
+affinity and anti-affinity answer a different question: where are
+*other Pods* running, identified by their own labels, regardless of
+which node happens to have them. `podAffinity` pulls a new Pod toward
+whatever node already runs a Pod matching its `labelSelector` (useful
+for a cache next to the service that hits it hardest); `podAntiAffinity`
+pushes it away from one (useful for spreading replicas so a single node
+failure can't take out all of them). Both share node affinity's two
+strictness levels (`required`/`preferredDuringSchedulingIgnoredDuringExecution`)
+and add one more field neither node affinity nor `nodeSelector` has:
+`topologyKey` - the node label whose *value* defines "same place."
+`kubernetes.io/hostname` means "the same node"; a label like
+`topology.kubernetes.io/zone` on a real multi-zone cluster would mean
+"the same zone" without requiring the exact same node. This tutorial's
+kind nodes carry no zone labels, so every example below uses
+`kubernetes.io/hostname`.
+
+**Example**: `tutorial/examples/scheduling/pod-affinity-anchor-pod.yaml`
+is a plain Pod labeled `app=scheduling-demo-colocate` - no affinity
+rules of its own, it just needs to land somewhere first:
+
+```
+kubectl apply -f tutorial/examples/scheduling/pod-affinity-anchor-pod.yaml
+kubectl get pod scheduling-demo-colocate-anchor -o wide
+```
+
+**Expected output**: scheduled onto whichever eligible worker the
+scheduler happened to pick - live, this cluster put it on
+`k8s-lab-default-worker2`:
+
+```
+NAME                              READY   STATUS    RESTARTS   AGE   IP           NODE
+scheduling-demo-colocate-anchor   1/1     Running   0          2s    10.244.1.3   k8s-lab-default-worker2
+```
+
+`tutorial/examples/scheduling/pod-affinity-pod.yaml` requires
+scheduling onto whatever node already runs a Pod labeled
+`app=scheduling-demo-colocate`:
+
+```
+kubectl apply -f tutorial/examples/scheduling/pod-affinity-pod.yaml
+kubectl get pod scheduling-demo-affinity-copod -o wide
+```
+
+**Expected output**: lands on the exact same node as the anchor, not
+just any eligible node - `podAffinity` matched the anchor's label, not
+any node label:
+
+```
+NAME                              READY   STATUS    RESTARTS   AGE   IP           NODE
+scheduling-demo-affinity-copod    1/1     Running   0          3s    10.244.1.4   k8s-lab-default-worker2
+```
+
+Now the opposite constraint - `tutorial/examples/scheduling/pod-anti-affinity-pod.yaml`
+requires scheduling onto a node that does *not* already run a Pod
+labeled `app=scheduling-demo-colocate`:
+
+```
+kubectl apply -f tutorial/examples/scheduling/pod-anti-affinity-pod.yaml
+kubectl get pod scheduling-demo-antiaffinity-pod -o wide
+```
+
+**Expected output**: lands on the *other* worker - the one neither the
+anchor nor the affinity Pod occupies - even though the anti-affinity
+Pod itself never specifies a node:
+
+```
+NAME                                READY   STATUS    RESTARTS   AGE   IP           NODE
+scheduling-demo-antiaffinity-pod   1/1     Running   0          44s   10.244.2.5   k8s-lab-default-worker
+```
+
+Three Pods, one shared label, two opposite rules against it - `podAffinity`
+and `podAntiAffinity` both matched on `app=scheduling-demo-colocate`,
+and the scheduler placed each Pod exactly where its own rule required,
+independent of anything about the nodes themselves.
 
 ### Taints and tolerations: the opposite direction
 
@@ -326,6 +406,81 @@ pods             0     3
 requests.cpu     0     500m
 requests.memory  0     256Mi
 ```
+
+**Storage has its own quota dimension**, separate from the CPU/memory
+one above: `persistentvolumeclaims` caps the PVC *count* the same way
+`pods` caps Pod count, and `requests.storage` caps the aggregate of
+every PVC's `spec.resources.requests.storage` in the namespace. A
+namespace can carry more than one ResourceQuota object - every one that
+applies to a given resource is enforced independently - so
+`tutorial/examples/scheduling/resourcequota-storage.yaml` adds a second
+quota object to the same namespace rather than editing the one above.
+The caveat worth stating plainly: `requests.storage` tracks the
+*declared* size on each PVC's spec, not any actual bytes written to the
+backing volume - a PVC counts fully against quota the moment it's
+created, whether or not it's even bound yet, and stays counted at its
+full declared size no matter how little (or how much, if the storage
+backend doesn't enforce capacity) ends up written to it.
+
+**Example**: apply the storage quota, then
+`tutorial/examples/scheduling/quota-storage-pvc.yaml` (a PVC declaring
+`1Gi`) - and check the quota's `Used` column *before* anything binds
+it:
+
+```
+kubectl apply -f tutorial/examples/scheduling/resourcequota-storage.yaml
+kubectl apply -f tutorial/examples/scheduling/quota-storage-pvc.yaml
+kubectl get pvc scheduling-demo-quota-pvc -n scheduling-demo-governance
+kubectl describe resourcequota scheduling-demo-storage-quota -n scheduling-demo-governance
+```
+
+**Expected output**: the PVC is `Pending` - this repo's default
+StorageClass uses `WaitForFirstConsumer` (chapter 4), so nothing is
+provisioned until a Pod actually mounts it - yet the quota already
+shows the full `1Gi` used, counted from the claim's spec alone:
+
+```
+NAME                        STATUS    VOLUME   CAPACITY   ACCESS MODES   STORAGECLASS   AGE
+scheduling-demo-quota-pvc   Pending                                      standard       0s
+
+Name:                   scheduling-demo-storage-quota
+Namespace:              scheduling-demo-governance
+Resource                Used  Hard
+--------                ----  ----
+persistentvolumeclaims  1     2
+requests.storage        1Gi   2Gi
+```
+
+Now bind it with `tutorial/examples/scheduling/quota-storage-pod.yaml`
+(mounts the PVC, writes a handful of bytes) and compare what's actually
+on disk to what the quota still reports:
+
+```
+kubectl apply -f tutorial/examples/scheduling/quota-storage-pod.yaml
+kubectl exec -n scheduling-demo-governance scheduling-demo-quota-storage-pod -- du -sh /data
+kubectl describe resourcequota scheduling-demo-storage-quota -n scheduling-demo-governance
+```
+
+**Expected output**: `8.0K` of real content against a `1Gi` declared
+claim - this lab's `local-path-provisioner` backing store is a plain
+hostPath directory with no real capacity enforcement at all, so nothing
+stops it from holding far less (or, unenforced, far more) than
+declared - and the quota's `Used` is unchanged, still `1Gi`, exactly
+what it showed while the PVC was still unbound and empty:
+
+```
+8.0K	/data
+
+Resource                Used  Hard
+--------                ----  ----
+persistentvolumeclaims  1     2
+requests.storage        1Gi   2Gi
+```
+
+ResourceQuota is bookkeeping against declared intent, the identical
+principle the requests/limits section above already established for CPU
+and memory - not a live measurement of what a namespace's Pods and PVCs
+are actually consuming right now.
 
 ### LimitRange: defaults so Pods don't have to specify resources every time
 

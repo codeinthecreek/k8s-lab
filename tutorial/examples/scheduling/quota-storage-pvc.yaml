@@ -1,0 +1,15 @@
+# Declares 1Gi. Nothing has written a single byte anywhere yet - a PVC
+# only becomes a real, sized volume once something binds it, and the
+# default StorageClass here uses WaitForFirstConsumer (chapter 4), so
+# this stays Pending/unbound until a Pod actually mounts it.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: scheduling-demo-quota-pvc
+  namespace: scheduling-demo-governance
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi

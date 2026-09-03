@@ -1,0 +1,18 @@
+# A second ResourceQuota object in the same namespace, scoped to the
+# storage dimension - persistentvolumeclaims (object count, same idea
+# as the "pods" cap in resourcequota.yaml) and requests.storage
+# (aggregate of every PVC's spec.resources.requests.storage - the
+# *declared* size, not any actual bytes written to the backing
+# volume). A namespace can carry more than one ResourceQuota object;
+# every one that applies to a given resource is enforced
+# independently, so this is additive to resourcequota.yaml's
+# compute-side caps, not a replacement for them.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: scheduling-demo-storage-quota
+  namespace: scheduling-demo-governance
+spec:
+  hard:
+    persistentvolumeclaims: "2"
+    requests.storage: "2Gi"

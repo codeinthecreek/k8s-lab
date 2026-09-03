@@ -1,0 +1,23 @@
+# Requires scheduling onto whichever node already runs a Pod labeled
+# app=scheduling-demo-colocate (the anchor). topologyKey defines the
+# granularity of "same place" - kubernetes.io/hostname means "the same
+# node"; a real multi-zone cluster could use a zone label here instead
+# to mean "the same zone" without requiring the exact same node.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: scheduling-demo-affinity-copod
+spec:
+  affinity:
+    podAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchExpressions:
+          - key: app
+            operator: In
+            values:
+            - scheduling-demo-colocate
+        topologyKey: kubernetes.io/hostname
+  containers:
+  - name: nginx
+    image: nginx:1.27
