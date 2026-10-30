@@ -308,3 +308,17 @@ applied last time. `kubernetes.io/metadata.name` survives both applies
 because it was never something *you* applied - the admission controller
 that set it, not kubectl, is that field's manager, and `apply`'s merge
 only ever touches fields it owns.
+
+### Cleaning up
+
+This chapter leaves two namespaces behind, `tutorial-api-model` and
+`tutorial-api-model-team-b`, along with the `namespace-demo` Pods in
+them. Deleting a namespace deletes everything inside it, so this one
+command removes all of it:
+
+```
+kubectl delete namespace tutorial-api-model tutorial-api-model-team-b
+```
+
+Namespace deletion waits for the Pods to terminate, so it can take a
+few seconds to return.
