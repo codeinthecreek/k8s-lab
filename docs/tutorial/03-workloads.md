@@ -250,3 +250,24 @@ nothing at all if it matches, silently. If you're scripting a rollout
 and expecting every invocation to produce a new revision, this is the
 failure mode: rerunning with an unchanged target is a true no-op, not an
 error you'd notice.
+
+### Cleaning up
+
+This chapter leaves a ReplicaSet and a Deployment running in the
+`default` namespace, along with the Pods and the two Deployment
+ReplicaSets they own (the bare Pod was already deleted above). Delete
+both controllers; the default cascade removes everything they own:
+
+```
+kubectl delete rs workloads-demo-rs
+kubectl delete deployment workloads-demo-deploy
+```
+
+Pods can take a few seconds to terminate. Confirm nothing is left:
+
+```
+kubectl get rs,pods -l 'app in (workloads-demo-rs, workloads-demo-deploy)'
+```
+
+An empty result (`No resources found in default namespace.`) means the
+chapter is fully cleaned up.
