@@ -8,6 +8,29 @@ the API model, workloads, networking - is something one of these
 components implements, so it's worth having the mental map before
 looking at any object spec.
 
+### Bringing up the cluster
+
+The examples in this chapter run against a live cluster, so start one
+first. From the repo root, with Docker running and `kind` and `kubectl`
+installed:
+
+```
+make up
+```
+
+This creates the `default` profile: one control-plane node and two
+workers, as Docker containers named `k8s-lab-default-control-plane`,
+`k8s-lab-default-worker`, and `k8s-lab-default-worker2`. Once it
+finishes, confirm the cluster is reachable:
+
+```
+make status
+```
+
+Commands later in this chapter that use `docker exec` take one of those
+container names. If you're unsure what yours are called (for instance
+on another profile), `docker ps --format '{{.Names}}'` lists them.
+
 ### Control plane and worker: what each role runs
 
 **Why**: Kubernetes splits "decide what should happen" from "make it
@@ -71,10 +94,12 @@ server entirely.
 
 **Example**: on any control-plane node, kubelet is configured to watch a
 manifest directory and run whatever Pod specs it finds there, without an
-apiserver in the loop:
+apiserver in the loop (`k8s-lab-default-control-plane` is the
+control-plane node's container name on the `default` profile; find
+yours with `docker ps`):
 
 ```
-docker exec <control-plane-container> ls /etc/kubernetes/manifests/
+docker exec k8s-lab-default-control-plane ls /etc/kubernetes/manifests/
 ```
 
 **Expected output**: four files, one per control-plane component:
