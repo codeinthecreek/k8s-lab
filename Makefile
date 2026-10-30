@@ -14,7 +14,7 @@ NFS_IMAGE     := itsthenetwork/nfs-server-alpine:latest
 NFS_DATA_DIR  := lab-helpers/nfs-server/data
 
 # lab-helpers/registry - see lab-helpers/registry/README.md.
-# For tutorial chapter 12 (source code -> running workload). Same
+# For tutorial chapter 13 (source code -> running workload). Same
 # profile-independent shape as nfs-server: one registry container shared
 # across profiles via the "kind" Docker network, published on the host so
 # `docker build`/`push` from outside the cluster can reach it too. Every
@@ -152,7 +152,7 @@ nfs-client-install:
 			fi'; \
 	done
 
-# --- lab-helpers/registry (local image registry for tutorial ch. 12) -----
+# --- lab-helpers/registry (local image registry for tutorial ch. 13) -----
 
 registry-up:
 	@if [ -n "$$(docker ps -q -f name=^/$(REGISTRY_CONTAINER)$$)" ]; then \

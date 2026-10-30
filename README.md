@@ -168,6 +168,9 @@ Run `make list-profiles` to list them from the filesystem directly.
 | `make kubeconfig PROFILE=x`   | `kind export kubeconfig` for that profile | Uses `default` |
 | `make status PROFILE=x`       | `kubectl get nodes -o wide` and `get pods -A` against that profile's context (errors clearly if it isn't up) | Auto-detects whichever profile's cluster is currently running |
 
+For day-to-day `kubectl`, `kind`, and `helm` commands, see the
+[command cheat sheet](docs/cheatsheet.md).
+
 ## Tutorial
 
 `docs/tutorial/` is a from-scratch, concept-first Kubernetes tutorial
@@ -266,6 +269,7 @@ worked example (adding a `calico` profile using the already-staged
 ```
 DESIGN.md                      architecture decisions and rationale
 docs/findings.md                running log of issues hit and fixes
+docs/cheatsheet.md              kubectl / kind / helm / make command cheat sheet
 docs/testing.md                 manual verification commands
 docs/tutorial/                  from-scratch Kubernetes tutorial (see docs/tutorial/README.md)
 tutorial/examples/<topic>/       manifests referenced by the tutorial's manifest-driven chapters
