@@ -129,8 +129,9 @@ make status PROFILE=ha-control-plane
 make down PROFILE=ha-control-plane
 ```
 
-Profiles are independent clusters (`k8s-lab-<profile>`), and their cluster
-API ports don't conflict with each other. **But only one of `default`,
+Each profile is its own cluster (`k8s-lab-<profile>`). For `default`,
+`ha-control-plane` and `calico`, the cluster API ports don't conflict
+with each other. **But only one of `default`,
 `ha-control-plane` and `calico` can be up at a time in practice**: all
 three also publish host ports 80/443 for ingress-nginx (`default` and
 `calico` on their control-plane node, `ha-control-plane` on a worker), and
