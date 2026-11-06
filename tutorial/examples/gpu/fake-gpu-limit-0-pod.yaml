@@ -1,0 +1,14 @@
+# Chapter 15 ("rules" section): a limit of zero.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-limit-0
+  namespace: gpu-demo
+spec:
+  containers:
+  - name: main
+    image: busybox:1.37
+    command: ["sleep", "3600"]
+    resources:
+      limits:
+        nvidia.com/gpu: 0

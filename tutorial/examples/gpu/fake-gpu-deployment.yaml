@@ -1,0 +1,26 @@
+# Chapter 15: a Deployment whose Pod asks for one nvidia.com/gpu.
+# Only a limit is written - the request is filled in from it (see the
+# chapter's "rules" section). The container is plain busybox; nothing
+# here needs, or gets, a real GPU.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gpu-demo
+  namespace: gpu-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: gpu-demo
+  template:
+    metadata:
+      labels:
+        app: gpu-demo
+    spec:
+      containers:
+      - name: main
+        image: busybox:1.37
+        command: ["sleep", "3600"]
+        resources:
+          limits:
+            nvidia.com/gpu: 1

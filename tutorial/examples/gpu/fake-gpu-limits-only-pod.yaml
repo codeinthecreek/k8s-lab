@@ -1,0 +1,14 @@
+# Chapter 15 ("rules" section): only a limit is written; the request is defaulted from it.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-limits-only
+  namespace: gpu-demo
+spec:
+  containers:
+  - name: main
+    image: busybox:1.37
+    command: ["sleep", "3600"]
+    resources:
+      limits:
+        nvidia.com/gpu: 1

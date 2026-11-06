@@ -1,0 +1,14 @@
+# Chapter 15 ("rules" section): a valid request larger than any single node advertises.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-limit-3
+  namespace: gpu-demo
+spec:
+  containers:
+  - name: main
+    image: busybox:1.37
+    command: ["sleep", "3600"]
+    resources:
+      limits:
+        nvidia.com/gpu: 3
