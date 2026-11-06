@@ -1,0 +1,26 @@
+# Three PriorityClasses for the "PriorityClass and preemption" subsection
+# of docs/tutorial/07-scheduling.md. PriorityClass is cluster-scoped (no
+# namespace). `value` is the priority integer a Pod gets when it names the
+# class; higher wins. The two "high" classes share one value and differ only
+# in preemptionPolicy, so the demo isolates that single field.
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: scheduling-demo-low
+value: 1000
+description: "Tutorial demo: low priority, can be preempted by the high classes."
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: scheduling-demo-high
+value: 100000
+description: "Tutorial demo: high priority, preempts lower-priority Pods (the default policy)."
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: scheduling-demo-high-nopreempt
+value: 100000
+preemptionPolicy: Never
+description: "Tutorial demo: same priority as scheduling-demo-high, but never evicts anything to make room."

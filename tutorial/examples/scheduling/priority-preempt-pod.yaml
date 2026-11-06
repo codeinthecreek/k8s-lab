@@ -1,0 +1,22 @@
+# High-priority Pod using the default preemptionPolicy
+# (PreemptLowerPriority): if it cannot fit, the scheduler may evict
+# lower-priority Pods to make room. See docs/tutorial/07-scheduling.md
+# (PriorityClass and preemption).
+#
+# NOT directly appliable: __HIGH_CPU__ is a placeholder computed from the
+# node's real capacity. The chapter substitutes it with sed before applying:
+#   sed "s/__HIGH_CPU__/$HIGH_CPU/" priority-preempt-pod.yaml | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: scheduling-demo-priority-preempt
+spec:
+  priorityClassName: scheduling-demo-high
+  nodeSelector:
+    kubernetes.io/hostname: k8s-lab-default-worker
+  containers:
+  - name: nginx
+    image: nginx:1.27
+    resources:
+      requests:
+        cpu: "__HIGH_CPU__"

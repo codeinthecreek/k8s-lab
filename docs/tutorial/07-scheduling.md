@@ -8,10 +8,11 @@ applied to nodes and, in a second form, to other Pods; the ways to
 influence where a Pod can and can't land (node affinity, pod
 affinity/anti-affinity, taints/tolerations); the resource requests/limits that
 shape *how much* of a node a Pod is allowed to consume once it's there;
-and, closing the loop from a single Pod to an entire namespace,
-ResourceQuota and LimitRange - the mechanism that turns a namespace from
-a bare naming scope into an actual resource boundary. This chapter
-covers what a Pod spec can say to influence *its own* placement;
+PriorityClass and preemption, which decide whose Pod gets the room when a
+node is full; and, closing the loop from a single Pod to an entire
+namespace, ResourceQuota and LimitRange - the mechanism that turns a
+namespace from a bare naming scope into an actual resource boundary.
+This chapter covers what a Pod spec can say to influence *its own* placement;
 configuring the scheduler itself - `KubeSchedulerConfiguration`,
 multiple named Scheduling Profiles selected via `spec.schedulerName` -
 is a separate topic, covered in chapter 14.
@@ -294,12 +295,12 @@ constrains a process's resource usage), checked independently of
 scheduling. The two together produce
 a Pod's **QoS class**: `Guaranteed` (every container's requests equal
 its limits), `Burstable` (requests set but lower than limits, or only
-some containers have both), `BestEffort` (neither set at all) - which
-matters most under real node memory pressure, where `BestEffort` and
-`Burstable` Pods are evicted before `Guaranteed` ones. Exceeding a
-memory limit gets a container `OOMKilled` outright; exceeding a CPU
-limit only throttles it - CPU can't be "killed" the way memory can,
-there's nothing to reclaim by force.
+some containers have both), `BestEffort` (neither set at all). The QoS
+class is derived from the requests and limits you wrote; ranking some
+Pods above others is a separate field, Pod priority, covered in the next
+section. Exceeding a memory limit gets a container `OOMKilled`
+outright; exceeding a CPU limit only throttles it - CPU can't be
+"killed" the way memory can, there's nothing to reclaim by force.
 
 **Example**: `tutorial/examples/scheduling/resource-qos-pod.yaml` sets
 requests equal to limits:
@@ -359,12 +360,309 @@ Unlike the CPU case, there's no throttling option for memory: once a
 cgroup hits its hard limit, the kernel has to reclaim the memory by
 force, and the only way to do that to a process is to kill it.
 
+Requests decide whether a Pod fits on a node at all. That leaves a
+question this section hasn't answered: when a node is full and a more
+important Pod arrives, does it simply wait? Pod priority is the answer.
+
+### PriorityClass and preemption
+
+**Why**: by default, a Pod that fits on no node just stays `Pending`,
+even when the room it needs is taken by Pods that matter far less. Pod
+priority changes that. A `PriorityClass` (cluster-scoped - it has no
+namespace) maps a name to an integer `value`. A Pod opts in with
+`spec.priorityClassName`, and the apiserver resolves the name into the
+numeric `spec.priority` the scheduler actually compares. When a pending
+Pod fits nowhere, the scheduler looks for a node where evicting
+lower-priority Pods would make enough room, and if it finds one it
+evicts them and places the Pod there. That is **preemption**.
+
+The class field `preemptionPolicy` controls it. The default,
+`PreemptLowerPriority`, allows preemption; `Never` opts out - a Pod
+using such a class carries the same priority number but, if it doesn't
+fit, waits `Pending` rather than evicting anything.
+
+Two classes already exist in every cluster, `system-cluster-critical`
+and `system-node-critical`, and the apiserver rejects any
+user-defined class with a value above 1000000000, reserving the range
+above that for them. A Pod that names no class gets priority `0` - the
+absence of a class is not itself a default class. A class can be marked
+`globalDefault: true`, which applies it to every Pod created *after* it
+that names no class (existing Pods keep priority `0`, and once the class
+is deleted, new Pods go back to `0`); only one such class may exist, and
+a second is rejected. This section doesn't demo it, because it changes
+the priority of every new Pod in the cluster while it exists.
+
+**Example**: the classes first - two built-in, then the three this
+section adds (`tutorial/examples/scheduling/priorityclasses.yaml`: a low
+class, a high class, and a high class with `preemptionPolicy: Never`,
+identical in every other way):
+
+```
+kubectl get priorityclass
+kubectl apply -f tutorial/examples/scheduling/priorityclasses.yaml
+kubectl get priorityclass
+```
+
+**Expected output**:
+
+```
+NAME                      VALUE        GLOBAL-DEFAULT   AGE     PREEMPTIONPOLICY
+system-cluster-critical   2000000000   false            2m32s   PreemptLowerPriority
+system-node-critical      2000001000   false            2m32s   PreemptLowerPriority
+
+priorityclass.scheduling.k8s.io/scheduling-demo-low created
+priorityclass.scheduling.k8s.io/scheduling-demo-high created
+priorityclass.scheduling.k8s.io/scheduling-demo-high-nopreempt created
+
+NAME                             VALUE        GLOBAL-DEFAULT   AGE     PREEMPTIONPOLICY
+scheduling-demo-high             100000       false            0s      PreemptLowerPriority
+scheduling-demo-high-nopreempt   100000       false            0s      Never
+scheduling-demo-low              1000         false            0s      PreemptLowerPriority
+system-cluster-critical          2000000000   false            2m37s   PreemptLowerPriority
+system-node-critical             2000001000   false            2m37s   PreemptLowerPriority
+```
+
+A Pod that names no class, for comparison
+(`tutorial/examples/scheduling/priority-default-pod.yaml`):
+
+```
+kubectl apply -f tutorial/examples/scheduling/priority-default-pod.yaml
+kubectl get pod scheduling-demo-priority-default -o jsonpath='{.spec.priority}{"\n"}'
+kubectl delete pod scheduling-demo-priority-default
+```
+
+**Expected output**:
+
+```
+pod/scheduling-demo-priority-default created
+0
+pod "scheduling-demo-priority-default" deleted from default namespace
+```
+
+**Setting up real pressure**: preemption only happens when a Pod
+doesn't fit, and how much CPU a kind node has depends on the host
+running Docker - a request size that fills a node on a laptop fits easily
+on a workstation. So the demo sizes its Pods from the node's own numbers
+instead of fixed values. Everything below pins to
+`k8s-lab-default-worker`, the same node the earlier examples in this
+chapter use.
+
+First, check the worker is empty of anything but system Pods. The
+scheduler evicts whichever lower-priority Pods it needs to make room, so
+a leftover Pod from an earlier section is a candidate victim like any
+other; starting clean keeps the filler as the only thing at risk.
+Finished Pods are excluded:
+
+```
+NODE=k8s-lab-default-worker
+kubectl get pods -A --field-selector spec.nodeName=$NODE,metadata.namespace!=kube-system,status.phase!=Succeeded,status.phase!=Failed
+```
+
+**Expected output**: nothing - the worker's only Pods on a fresh
+cluster are `kindnet` and `kube-proxy`, both in `kube-system`:
+
+```
+No resources found
+```
+
+If it lists Pods from earlier sections of this chapter, delete them
+(Pods you deleted a moment ago can still show as `Terminating` - re-run
+the listing until it's empty):
+
+```
+kubectl delete pod --ignore-not-found scheduling-demo-affinity-pod scheduling-demo-affinity-impossible-pod scheduling-demo-colocate-anchor scheduling-demo-affinity-copod scheduling-demo-antiaffinity-pod scheduling-demo-notoleration-pod scheduling-demo-toleration-pod scheduling-demo-qos-pod scheduling-demo-oom-pod
+kubectl delete namespace --ignore-not-found scheduling-demo-governance
+```
+
+Then compute the sizes. `FREE` is the worker's allocatable CPU minus
+the CPU requests of every Pod already scheduled there; the filler takes
+60% of it and the high-priority Pod will ask for 50%, so the high-priority
+Pod can't fit beside the filler but fits easily once the filler is gone:
+
+```
+ALLOC=$(kubectl get node $NODE -o go-template='{{.status.allocatable.cpu}}')
+case $ALLOC in *m) ALLOC_M=${ALLOC%m} ;; *) ALLOC_M=$((ALLOC * 1000)) ;; esac
+REQ_M=0
+for c in $(kubectl get pods -A --field-selector spec.nodeName=$NODE,status.phase!=Succeeded,status.phase!=Failed \
+    -o go-template='{{range .items}}{{range .spec.containers}}{{with .resources.requests}}{{with .cpu}}{{.}}{{"\n"}}{{end}}{{end}}{{end}}{{end}}' \
+    | sed -E 's/m$//; t; s/$/000/'); do REQ_M=$((REQ_M + c)); done
+FREE=$((ALLOC_M - REQ_M))
+FILL_CPU=$((FREE * 60 / 100))m
+HIGH_CPU=$((FREE * 50 / 100))m
+echo "allocatable=${ALLOC_M}m requested=${REQ_M}m FREE=${FREE}m FILL_CPU=$FILL_CPU HIGH_CPU=$HIGH_CPU"
+```
+
+The `go-template` pulls out each container's CPU request, `sed` turns
+`100m` into `100` and a whole-core `1` into `1000`, and the shell loop
+sums them (init containers and Pod overhead aren't counted - none exist
+on this worker).
+
+**Expected output**: these numbers are from an 8-CPU Docker host; yours
+will differ, but the 60% / 50% relationship holds on any host:
+
+```
+allocatable=8000m requested=100m FREE=7900m FILL_CPU=4740m HIGH_CPU=3950m
+```
+
+**Example**: apply the low-priority filler
+(`tutorial/examples/scheduling/priority-filler-pod.yaml` - its
+`__FILL_CPU__` placeholder is filled in with `sed`, which is why the
+file isn't directly appliable):
+
+```
+sed "s/__FILL_CPU__/$FILL_CPU/" tutorial/examples/scheduling/priority-filler-pod.yaml | kubectl apply -f -
+kubectl wait --for=condition=Ready pod/scheduling-demo-priority-filler --timeout=60s
+kubectl get pod scheduling-demo-priority-filler -o wide
+```
+
+**Expected output**:
+
+```
+pod/scheduling-demo-priority-filler created
+pod/scheduling-demo-priority-filler condition met
+
+NAME                              READY   STATUS    RESTARTS   AGE   IP           NODE
+scheduling-demo-priority-filler   1/1     Running   0          2s    10.244.2.5   k8s-lab-default-worker
+```
+
+`kubectl wait` covers the delay while the Pod starts; without it, the
+first `get` can still show `Pending`.
+
+First the opt-out. `priority-nopreempt-pod.yaml` is high priority
+(100000) but its class says `preemptionPolicy: Never`, and it requests
+`HIGH_CPU` - more than the 40% of `FREE` still free:
+
+```
+sed "s/__HIGH_CPU__/$HIGH_CPU/" tutorial/examples/scheduling/priority-nopreempt-pod.yaml | kubectl apply -f -
+kubectl get pods -o wide
+kubectl describe pod scheduling-demo-priority-nopreempt | grep -A3 Events:
+```
+
+**Expected output**: `Pending`, with the filler untouched - and the
+event says outright why the scheduler didn't preempt:
+
+```
+NAME                                 READY   STATUS    RESTARTS   AGE   IP           NODE
+scheduling-demo-priority-filler      1/1     Running   0          10s   10.244.2.5   k8s-lab-default-worker
+scheduling-demo-priority-nopreempt   0/1     Pending   0          8s    <none>       <none>
+
+Events:
+  Type     Reason            Age   From               Message
+  ----     ------            ----  ----               -------
+  Warning  FailedScheduling  8s    default-scheduler  0/3 nodes are available: 1 Insufficient cpu, 1 node(s) didn't match Pod's node affinity/selector, 1 node(s) had untolerated taint(s). no new claims to deallocate, preemption: not eligible due to preemptionPolicy=Never.
+```
+
+Three nodes, three reasons: the worker is out of CPU, the other worker
+doesn't match the Pod's `nodeSelector`, and the control-plane node's
+taint (chapter 1) excludes it. The last clause is the one that matters
+here. Nothing changes if you wait - the Pod stays `Pending` and the
+filler stays `Running`, never restarted.
+
+Now the same request with the default policy. Delete the `Never` Pod
+first, so it can't compete with the next one for the room about to be
+freed, then apply `priority-preempt-pod.yaml` (class
+`scheduling-demo-high`) and look immediately:
+
+```
+kubectl delete pod scheduling-demo-priority-nopreempt
+sed "s/__HIGH_CPU__/$HIGH_CPU/" tutorial/examples/scheduling/priority-preempt-pod.yaml | kubectl apply -f -
+kubectl get pods -o wide
+kubectl get pod scheduling-demo-priority-filler -o jsonpath='{range .status.conditions[?(@.type=="DisruptionTarget")]}{.reason}: {.message}{"\n"}{end}'
+```
+
+**Expected output**: the new Pod is `Pending` with `NOMINATED NODE`
+set - the scheduler has chosen the worker for it and is waiting for the
+room to appear - and the filler is on its way out. The very first
+listing may still show the filler `Running`; within a few seconds it
+reads `Terminating`, as below. The `DisruptionTarget` condition, which
+records why, is already set on the filler by then:
+
+```
+pod "scheduling-demo-priority-nopreempt" deleted from default namespace
+pod/scheduling-demo-priority-preempt created
+
+NAME                               READY   STATUS        RESTARTS   AGE   IP           NODE                     NOMINATED NODE
+scheduling-demo-priority-filler    1/1     Terminating   0          67s   10.244.2.5   k8s-lab-default-worker   <none>
+scheduling-demo-priority-preempt   0/1     Pending       0          0s    <none>       <none>                   k8s-lab-default-worker
+
+PreemptionByScheduler: default-scheduler: preempting to accommodate a higher priority pod
+```
+
+That Terminating window lasts about 30 seconds here, for a reason
+specific to this demo: the filler's `sleep` runs as PID 1, which has no
+SIGTERM handler, so it ignores the signal and the Pod waits out the full
+30-second default grace period before it's killed. Preemption respects
+that grace period - the new Pod isn't placed until the victim is
+actually gone. Re-run `kubectl get pods -o wide` after about 30 seconds:
+
+```
+NAME                               READY   STATUS    RESTARTS   AGE   IP           NODE                     NOMINATED NODE
+scheduling-demo-priority-preempt   1/1     Running   0          32s   10.244.2.6   k8s-lab-default-worker   <none>
+```
+
+The filler is gone entirely, and `NOMINATED NODE` has cleared now that
+the Pod is bound - `nominatedNodeName` is only visible while the Pod is
+waiting. (Watching it live, the filler's last reported status is
+`Error`: after the grace period expires it's killed with `SIGKILL`,
+exit code 137.) The record of what happened is an event on the *victim*,
+not the preemptor, and it names the preemptor by UID rather than by
+name:
+
+```
+kubectl get events --field-selector reason=Preempted
+kubectl get pod scheduling-demo-priority-preempt -o jsonpath='{.metadata.uid}{"\n"}'
+```
+
+**Expected output**:
+
+```
+LAST SEEN   TYPE     REASON      OBJECT                                MESSAGE
+48s         Normal   Preempted   pod/scheduling-demo-priority-filler   Preempted by pod b9b7c5bf-1a82-44bf-a548-ae964ef92be8 on node k8s-lab-default-worker
+
+b9b7c5bf-1a82-44bf-a548-ae964ef92be8
+```
+
+The UIDs match. (Events are only kept for a limited time, so re-running
+the demo soon after can list older `Preempted` rows too - the newest is
+the one to match.) The filler was the only Pod evicted - `kindnet` and
+`kube-proxy`, the worker's other tenants, show no restarts and the same
+age as before. The scheduler evicts only what it needs to: in a
+separate check with a leftover priority-0 Pod on the worker, that Pod
+survived because evicting the filler alone made enough room, but when
+the preemptor's request was large enough that the filler alone wasn't
+enough, the leftover was evicted too. A lower-priority Pod is a
+legitimate victim whenever its room is needed.
+
+#### Teardown
+
+Everything this section created: the Pods (some are already gone), then
+the three PriorityClasses - the system ones are built in and stay:
+
+```
+kubectl delete pod --ignore-not-found scheduling-demo-priority-preempt scheduling-demo-priority-filler scheduling-demo-priority-nopreempt scheduling-demo-priority-default
+kubectl delete -f tutorial/examples/scheduling/priorityclasses.yaml
+kubectl get priorityclass
+```
+
+**Expected output**: only the two built-in classes remain:
+
+```
+pod "scheduling-demo-priority-preempt" deleted from default namespace
+priorityclass.scheduling.k8s.io "scheduling-demo-low" deleted
+priorityclass.scheduling.k8s.io "scheduling-demo-high" deleted
+priorityclass.scheduling.k8s.io "scheduling-demo-high-nopreempt" deleted
+
+NAME                      VALUE        GLOBAL-DEFAULT   AGE   PREEMPTIONPOLICY
+system-cluster-critical   2000000000   false            10m   PreemptLowerPriority
+system-node-critical      2000001000   false            10m   PreemptLowerPriority
+```
+
 ### ResourceQuota: capping aggregate consumption per namespace
 
-**Why**: everything in the previous section is per-Pod and voluntary -
-nothing stops a namespace from accumulating an unbounded number of
-Pods, or Pods with arbitrarily large requests/limits, until the
-*node's* real capacity runs out. ResourceQuota caps totals across an
+**Why**: everything in the previous two sections is per-Pod and
+voluntary - nothing stops a namespace from accumulating an unbounded
+number of Pods, or Pods with arbitrarily large requests/limits, until
+the *node's* real capacity runs out. ResourceQuota caps totals across an
 entire namespace instead - aggregate `requests.cpu`/`requests.memory`,
 aggregate `limits.cpu`/`limits.memory`, object counts like `pods` - and
 it has a second, easy-to-miss effect: once a ResourceQuota constrains a

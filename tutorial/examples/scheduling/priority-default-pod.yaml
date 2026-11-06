@@ -1,0 +1,10 @@
+# A Pod with no priorityClassName, used to show what priority a Pod gets by
+# default. See docs/tutorial/07-scheduling.md (PriorityClass and preemption).
+apiVersion: v1
+kind: Pod
+metadata:
+  name: scheduling-demo-priority-default
+spec:
+  containers:
+  - name: nginx
+    image: nginx:1.27
