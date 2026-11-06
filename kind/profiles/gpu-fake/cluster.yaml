@@ -1,0 +1,32 @@
+# gpu-fake profile: 1 control-plane + 2 workers, no ingress, no add-ons.
+#
+# Used by the tutorial's GPU section (docs/tutorial/15-*.md onward). Same
+# pinned node image/digest as the default profile - see
+# kind/profiles/default/cluster.yaml for the version source. No GPU is
+# present or configured here: the section's first chapters advertise a
+# fake nvidia.com/gpu extended resource on the workers after cluster
+# creation.
+#
+# Cluster name is NOT set here on purpose - the Makefile passes
+# --name k8s-lab-gpu-fake (kubectl context kind-k8s-lab-gpu-fake), which
+# is distinct from every other profile's. No extraPortMappings either.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+
+networking:
+  disableDefaultCNI: false
+
+# Same as the other profiles - see DESIGN.md's "Local registry:
+# containerd config_path patch".
+containerdConfigPatches:
+  - |-
+    [plugins."io.containerd.grpc.v1.cri".registry]
+      config_path = "/etc/containerd/certs.d"
+
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5
+  - role: worker
+    image: kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5
+  - role: worker
+    image: kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5
