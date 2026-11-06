@@ -294,9 +294,7 @@ constrains a process's resource usage), checked independently of
 scheduling. The two together produce
 a Pod's **QoS class**: `Guaranteed` (every container's requests equal
 its limits), `Burstable` (requests set but lower than limits, or only
-some containers have both), `BestEffort` (neither set at all) - which
-matters most under real node memory pressure, where `BestEffort` and
-`Burstable` Pods are evicted before `Guaranteed` ones. Exceeding a
+some containers have both), `BestEffort` (neither set at all). Exceeding a
 memory limit gets a container `OOMKilled` outright; exceeding a CPU
 limit only throttles it - CPU can't be "killed" the way memory can,
 there's nothing to reclaim by force.
