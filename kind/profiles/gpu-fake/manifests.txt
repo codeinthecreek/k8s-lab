@@ -1,0 +1,1 @@
+# gpu-fake applies no manifests: no ingress-nginx, no metrics-server.

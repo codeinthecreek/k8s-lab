@@ -129,13 +129,14 @@ make status PROFILE=ha-control-plane
 make down PROFILE=ha-control-plane
 ```
 
-Profiles are independent clusters (`k8s-lab-<profile>`), and their cluster
-API ports don't conflict with each other. **But only one can be up at a
-time in practice**: every current profile also publishes host ports 80/443
-for ingress-nginx (`default` and `calico` on their control-plane node,
-`ha-control-plane` on a worker), and Docker will only let one container
-anywhere hold a given host port. Bringing up a second one while the first
-is still running fails with:
+Each profile is its own cluster (`k8s-lab-<profile>`). For `default`,
+`ha-control-plane` and `calico`, the cluster API ports don't conflict
+with each other. **But only one of `default`,
+`ha-control-plane` and `calico` can be up at a time in practice**: all
+three also publish host ports 80/443 for ingress-nginx (`default` and
+`calico` on their control-plane node, `ha-control-plane` on a worker), and
+Docker will only let one container anywhere hold a given host port.
+Bringing up a second one while the first is still running fails with:
 
 ```
 docker: Error response from daemon: failed to set up container networking:
@@ -145,7 +146,7 @@ docker: Error response from daemon: failed to set up container networking:
 `make down PROFILE=<other>` first if you hit that - see
 [docs/findings.md](docs/findings.md) for how this was found and why it's
 not fixed in config. A future profile could avoid the clash by mapping
-ingress to different host ports, but none here do.
+ingress to different host ports, but none of those three do.
 
 Available profiles:
 
@@ -154,6 +155,7 @@ Available profiles:
 | `default`          | 1 control-plane + 2 workers      | kindnetd CNI |
 | `ha-control-plane`  | 3 control-plane + 2 workers      | kindnetd CNI; Envoy load-balances the 3 apiservers |
 | `calico`            | 1 control-plane + 2 workers      | Calico CNI (kindnetd disabled); alternative CNI demo - kindnetd on current node images also enforces NetworkPolicy, see DESIGN.md |
+| `gpu-fake`          | 1 control-plane + 2 workers      | kindnetd CNI; no ingress, no metrics-server, publishes no host ports; the GPU section's profile (tutorial ch. 15 on) - nodes advertise a fake `nvidia.com/gpu` by hand |
 
 Run `make list-profiles` to list them from the filesystem directly.
 
@@ -176,7 +178,8 @@ For day-to-day `kubectl`, `kind`, and `helm` commands, see the
 `docs/tutorial/` is a from-scratch, concept-first Kubernetes tutorial
 written directly against this repo rather than alongside it: manifest-
 driven chapters use real YAML under `tutorial/examples/`, applied to one
-of this repo's profiles (`default`, `ha-control-plane`, or `calico`);
+of this repo's profiles (`default`, `ha-control-plane`, `calico`, or
+`gpu-fake` for the GPU section);
 command/concept-driven chapters (architecture, Helm, observability, HA)
 work directly against a live cluster via `kubectl`/`docker` instead.
 Every example, manifest or command, is verified against real cluster

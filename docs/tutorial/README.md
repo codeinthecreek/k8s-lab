@@ -2,7 +2,8 @@
 
 A from-scratch, concept-first Kubernetes tutorial. It's written for
 anyone with `kind` and `kubectl` installed, and uses this repo's own
-profiles (`default`, `ha-control-plane`, `calico`) and manifests as its
+profiles (`default`, `ha-control-plane`, `calico`, and `gpu-fake` for the
+GPU section) and manifests as its
 working examples.
 
 **Chapter order follows concept dependency.** The numeric filename
@@ -12,8 +13,10 @@ reasoning behind this and every other convention this tutorial follows.
 
 Written and verified against: **Kubernetes v1.36.1** (kind server
 version, `default` profile, `kindest/node:v1.36.1`), captured via
-`kubectl version`. Chapters using `ha-control-plane` or `calico` note
-that explicitly where relevant. Version-specific behavior is flagged
+`kubectl version`. Chapters using `ha-control-plane`, `calico` or `gpu-fake` note
+that explicitly where relevant. Chapter 15 (the GPU section's first
+chapter) was verified against kind v0.33.0, `kindest/node:v1.36.1` and
+kubectl client v1.37.1. Version-specific behavior is flagged
 inline per-chapter rather than assumed to hold indefinitely - see
 DESIGN.md.
 
@@ -38,6 +41,7 @@ commands used throughout, see the [command cheat sheet](../cheatsheet.md).
 | 12 | [High availability and cluster operations](12-high-availability.md) | Multi-control-plane topology, etcd quorum, load-balancer fronting, node-failure semantics, PodDisruptionBudgets, etcd backup/restore, and kubeadm cluster upgrades. Capstone chapter. | verified against live cluster |
 | 13 | [From source code to a running workload](13-app-deployment.md) | The developer-perspective seam chapters 1-12 don't cover: a minimal app + Dockerfile, build/tag/push to a local registry (`lab-helpers/registry`), `imagePullPolicy` failure modes for a self-built image, Deployment/Service/Ingress/ConfigMap tying chapters 3-5 together, and a rolling update triggered by a real source code change. Structurally distinct from the other chapters, not an extension of one. | verified against live cluster |
 | 14 | [Advanced and supplementary topics](14-advanced-topics.md) | Topics that don't fit chapters 1-13's concept-dependency ordering: `KubeSchedulerConfiguration`/Scheduling Profiles (the mechanism replacing the removed `--policy-config-file`), Dynamic Resource Allocation (`resource.k8s.io`, GA in 1.34 - optional, depends on an external Helm chart), Headlamp as a cluster web UI, and a short krew subsection. Appended after the capstone/structurally-distinct chapters rather than interleaved. | verified against live cluster |
+| 15 | [Fake GPUs: extended resources as a scheduler-accounted counter](15-fake-gpu-nodes.md) | First chapter of the GPU section, on its own `gpu-fake` profile (1 control-plane + 2 workers, no GPU, no add-ons). Advertises `nvidia.com/gpu` on a node through the Node `status` subresource, schedules and exhausts it, adds capacity so a Pending Pod places itself, the request/limit rules, what the advertised value does and doesn't survive, and shows that a count attaches nothing to the container. Opens with the state of the device-plugin and DRA models as documented for v1.36. Device plugins, GPU labels/taints, quotas and real GPUs are later chapters. | verified against live cluster |
 
 Status values: **not started** / **drafted** (written, examples not yet
 re-verified against a live cluster) / **verified against live cluster**

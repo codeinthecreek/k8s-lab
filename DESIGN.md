@@ -254,7 +254,8 @@ as an explicit manifest under `manifests/storage/`, referenced from
 
 ## Local registry: containerd config_path patch
 
-All three profiles' `cluster.yaml` carry a top-level `containerdConfigPatches`
+Every profile's `cluster.yaml` (`default`, `ha-control-plane`, `calico`,
+`gpu-fake`) carries a top-level `containerdConfigPatches`
 setting `[plugins."io.containerd.grpc.v1.cri".registry] config_path =
 "/etc/containerd/certs.d"`. This is what lets `lab-helpers/registry` (a
 `registry:3` container, same pattern as `lab-helpers/nfs-server` - see the
@@ -271,7 +272,7 @@ cluster creation, because `containerdConfigPatches` only takes effect at
 `kind create cluster` time - unlike `lab-helpers/nfs-server`'s client
 package install, which can be redone against already-running nodes,
 enabling registry config_path support requires recreating the cluster.
-Applied to all three profiles for the same reason node image digests are
+Applied to every profile for the same reason node image digests are
 kept in sync across them (see "Node image pinning" below): a structural
 capability like this shouldn't silently work on one profile and not
 another.
@@ -304,6 +305,13 @@ onto different node images.
 independent of any course material, aimed at anyone with `kind` and
 `kubectl` installed, not just this repo's maintainer. See
 `docs/tutorial/README.md` for the chapter list and scope.
+
+**The GPU section uses its own profiles.** Chapters from 15 on run on
+`kind/profiles/gpu-fake/` (1 control-plane + 2 workers, no ingress or
+metrics-server, same pinned node image and registry patch as the other
+profiles) instead of extending `default`, so GPU-specific state - here, a
+fake `nvidia.com/gpu` count written onto Node objects - never leaks into
+the earlier chapters' cluster.
 
 **Chapter order follows concept dependency, not an exam's domain list or
 a course's lesson order.** A CKA domain breakdown or a course syllabus is

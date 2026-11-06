@@ -1,0 +1,16 @@
+# Chapter 15 ("rules" section): a fractional quantity; the apiserver rejects it.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-fractional
+  namespace: gpu-demo
+spec:
+  containers:
+  - name: main
+    image: busybox:1.37
+    command: ["sleep", "3600"]
+    resources:
+      requests:
+        nvidia.com/gpu: 500m
+      limits:
+        nvidia.com/gpu: 500m

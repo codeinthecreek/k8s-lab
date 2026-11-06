@@ -4,6 +4,40 @@ Running log of problems hit while building/operating this lab and what
 fixed them. Newest entries at the top. Not a changelog of features -
 `git log` covers that. This is for things that cost time figuring out.
 
+## 2026-11-06 - `/proc/driver/nvidia/*` is visible inside Pods on a host with an NVIDIA driver, even when no GPU was ever attached
+
+While writing chapter 15's "a count is not a device" check, looked for
+anything GPU-related inside a Pod that had been scheduled against a fake
+`nvidia.com/gpu` count. `/dev/nvidia*`, `NVIDIA_*`/`CUDA_*` environment
+variables, `nvidia-smi` and nvidia mounts were all absent, as expected -
+but `cat /proc/driver/nvidia/version` succeeded and printed the host's
+driver version, and the files under `/proc/driver/nvidia/` described the
+host's real GPU. `/proc` is the host kernel's, shared with every container
+on the machine, so those files exist inside a kind node and inside its Pods
+whenever the host has the kernel driver loaded, regardless of what the Pod
+requested.
+
+Lesson: on a host with an NVIDIA driver, `/proc/driver/nvidia` is not
+evidence that anything was attached to a container - and on a host without
+one it will be absent, so a check that uses it gives different answers on
+different machines. The chapter checks device files, environment variables
+and a driver tool instead. Captures from a host that has the driver can
+carry host-specific details (model, driver version); keep them out of the
+repo.
+
+## 2026-11-06 - `kubectl patch node` without `--subresource=status` succeeds and does nothing
+
+Tried to advertise a fake `nvidia.com/gpu` count with an ordinary
+`kubectl patch node <node> --type=json -p '[{"op":"add","path":"/status/capacity/nvidia.com~1gpu","value":"2"}]'`.
+It exits 0 and prints `node/<node> patched (no change)`; the key never
+appears in `status.capacity`. Adding `--subresource=status` to the same
+command makes it take effect (`node/<node> patched`, and the key shows up
+at once in `capacity`, then in `allocatable` a few seconds later). Checked
+live on kind v0.33.0 / `kindest/node:v1.36.1` with kubectl v1.37.1.
+
+Lesson: that message looks like success. When writing to a Node's status
+by hand, verify the field afterwards rather than trusting the exit code.
+
 ## 2026-09-03 - A custom `NodeResourcesFit` scoring strategy alone doesn't bin-pack - `PodTopologySpread`'s default weight outvotes it
 
 While writing the tutorial's scheduler-configuration material

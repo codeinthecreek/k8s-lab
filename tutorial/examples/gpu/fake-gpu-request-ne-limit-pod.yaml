@@ -1,0 +1,16 @@
+# Chapter 15 ("rules" section): request 1, limit 2; the apiserver rejects unequal values.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-request-ne-limit
+  namespace: gpu-demo
+spec:
+  containers:
+  - name: main
+    image: busybox:1.37
+    command: ["sleep", "3600"]
+    resources:
+      requests:
+        nvidia.com/gpu: 1
+      limits:
+        nvidia.com/gpu: 2
