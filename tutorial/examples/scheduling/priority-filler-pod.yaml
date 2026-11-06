@@ -1,0 +1,27 @@
+# Low-priority "filler" that occupies most of one worker's free CPU, so a
+# higher-priority Pod cannot fit beside it. See docs/tutorial/07-scheduling.md
+# (PriorityClass and preemption).
+#
+# NOT directly appliable: __FILL_CPU__ is a placeholder for a value computed
+# from the node's real capacity (so the demo works on any host size). The
+# chapter substitutes it with sed before applying:
+#   sed "s/__FILL_CPU__/$FILL_CPU/" priority-filler-pod.yaml | kubectl apply -f -
+#
+# `sleep` as PID 1 has no SIGTERM handler, so it ignores the signal and the
+# Pod stays Terminating for the full 30s default grace period when it is
+# preempted - long enough to observe the in-between state.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: scheduling-demo-priority-filler
+spec:
+  priorityClassName: scheduling-demo-low
+  nodeSelector:
+    kubernetes.io/hostname: k8s-lab-default-worker
+  containers:
+  - name: filler
+    image: nginx:1.27
+    command: ["sleep", "3600"]
+    resources:
+      requests:
+        cpu: "__FILL_CPU__"

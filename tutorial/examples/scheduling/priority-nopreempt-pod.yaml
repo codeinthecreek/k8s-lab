@@ -1,0 +1,22 @@
+# Same priority and size as priority-preempt-pod.yaml, but its class sets
+# preemptionPolicy: Never - if it does not fit it stays Pending and never
+# evicts anything. See docs/tutorial/07-scheduling.md (PriorityClass and
+# preemption).
+#
+# NOT directly appliable: __HIGH_CPU__ is a placeholder computed from the
+# node's real capacity. The chapter substitutes it with sed before applying:
+#   sed "s/__HIGH_CPU__/$HIGH_CPU/" priority-nopreempt-pod.yaml | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: scheduling-demo-priority-nopreempt
+spec:
+  priorityClassName: scheduling-demo-high-nopreempt
+  nodeSelector:
+    kubernetes.io/hostname: k8s-lab-default-worker
+  containers:
+  - name: nginx
+    image: nginx:1.27
+    resources:
+      requests:
+        cpu: "__HIGH_CPU__"
