@@ -1,0 +1,6 @@
+# Namespace for chapter 16's GPU-scheduling demo objects. Deleting this
+# namespace removes every Pod and Deployment the chapter creates.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gpu-sched

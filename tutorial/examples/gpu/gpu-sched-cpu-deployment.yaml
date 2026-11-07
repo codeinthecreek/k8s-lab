@@ -1,0 +1,20 @@
+# Chapter 16 (taint): four ordinary Pods with no GPU request and no toleration.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cpu-demo
+  namespace: gpu-sched
+spec:
+  replicas: 4
+  selector:
+    matchLabels:
+      app: cpu-demo
+  template:
+    metadata:
+      labels:
+        app: cpu-demo
+    spec:
+      containers:
+      - name: main
+        image: busybox:1.37
+        command: ["sleep", "3600"]

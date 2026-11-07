@@ -1,0 +1,22 @@
+# Chapter 16 (node affinity): requires nvidia.com/gpu.memory greater than 50000; no node in the lab is that large.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-aff-gt-50000
+  namespace: gpu-sched
+spec:
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: nvidia.com/gpu.memory
+            operator: Gt
+            values: ["50000"]
+  containers:
+  - name: main
+    image: busybox:1.37
+    command: ["sleep", "3600"]
+    resources:
+      limits:
+        nvidia.com/gpu: 1

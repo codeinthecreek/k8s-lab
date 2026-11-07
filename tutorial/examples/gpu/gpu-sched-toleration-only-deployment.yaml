@@ -1,0 +1,24 @@
+# Chapter 16 (toleration): six Pods that tolerate nvidia.com/gpu:NoSchedule but request no GPU.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: toleration-only
+  namespace: gpu-sched
+spec:
+  replicas: 6
+  selector:
+    matchLabels:
+      app: toleration-only
+  template:
+    metadata:
+      labels:
+        app: toleration-only
+    spec:
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+      containers:
+      - name: main
+        image: busybox:1.37
+        command: ["sleep", "3600"]
