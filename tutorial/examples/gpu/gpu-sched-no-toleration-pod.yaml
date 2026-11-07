@@ -1,0 +1,14 @@
+# Chapter 16 (taint): asks for one GPU and has no toleration.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-no-toleration
+  namespace: gpu-sched
+spec:
+  containers:
+  - name: main
+    image: busybox:1.37
+    command: ["sleep", "3600"]
+    resources:
+      limits:
+        nvidia.com/gpu: 1

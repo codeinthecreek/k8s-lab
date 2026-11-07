@@ -1,0 +1,23 @@
+# Chapter 16 (node affinity): same preference as the -first file, applied after it.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-aff-pref-second
+  namespace: gpu-sched
+spec:
+  affinity:
+    nodeAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        preference:
+          matchExpressions:
+          - key: nvidia.com/gpu.product
+            operator: In
+            values: ["A100-SXM4-40GB"]
+  containers:
+  - name: main
+    image: busybox:1.37
+    command: ["sleep", "3600"]
+    resources:
+      limits:
+        nvidia.com/gpu: 1

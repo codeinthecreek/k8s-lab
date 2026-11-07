@@ -1,0 +1,16 @@
+# Chapter 16 (nodeSelector): selects a product no node carries. H100-SXM5-80GB is illustrative; no node in this lab has it.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-sel-h100
+  namespace: gpu-sched
+spec:
+  nodeSelector:
+    nvidia.com/gpu.product: H100-SXM5-80GB
+  containers:
+  - name: main
+    image: busybox:1.37
+    command: ["sleep", "3600"]
+    resources:
+      limits:
+        nvidia.com/gpu: 1

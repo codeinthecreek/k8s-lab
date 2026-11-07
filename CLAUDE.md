@@ -38,3 +38,7 @@ There is no build/lint/test tooling — this is declarative config, not code. Th
 **HA control plane uses kind's Envoy load balancer**, not HAProxy (kind switched in a recent release — verify against current kind release notes if this matters again, don't assume). It runs as a separate Docker container (`<cluster>-external-load-balancer`) using Envoy's xDS dynamic config (`/home/envoy/cds.yaml` and `lds.yaml` inside that container, not the static `/etc/envoy/envoy.yaml` which is unused leftover from the base image) listing all control-plane nodes as health-checked backends. kubeconfig's `server:` field points at this container, not at any individual apiserver.
 
 **Storage is kind's default `local-path-provisioner` only** — hostPath-backed, no ReadWriteMany, no replication. See DESIGN.md if this needs to change; the intended replacement path is an NFS-backed provisioner added as an explicit manifest under a new `manifests/storage/`, following the same pattern as everything else here.
+
+## Commits, pull requests and issues
+
+End commit messages with the `Co-Authored-By:` trailer only; do not add a `Claude-Session:` trailer. Pull request and issue bodies are ASCII-only, with no "Generated with" line and no session URL.

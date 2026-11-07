@@ -1,0 +1,22 @@
+# Chapter 16 (node affinity): requires nvidia.com/gpu.product to be one of two values.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-aff-in
+  namespace: gpu-sched
+spec:
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: nvidia.com/gpu.product
+            operator: In
+            values: ["Tesla-T4", "A100-SXM4-40GB"]
+  containers:
+  - name: main
+    image: busybox:1.37
+    command: ["sleep", "3600"]
+    resources:
+      limits:
+        nvidia.com/gpu: 1

@@ -1,0 +1,13 @@
+# Chapter 16 (taint): a Pod with no GPU request, pinned to the worker by hostname, applied BEFORE the worker is tainted.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-pre-taint
+  namespace: gpu-sched
+spec:
+  nodeSelector:
+    kubernetes.io/hostname: k8s-lab-gpu-fake-worker
+  containers:
+  - name: main
+    image: busybox:1.37
+    command: ["sleep", "3600"]
