@@ -4,26 +4,13 @@ Running log of problems hit while building/operating this lab and what
 fixed them. Newest entries at the top. Not a changelog of features -
 `git log` covers that. This is for things that cost time figuring out.
 
-## 2026-11-06 - `/proc/driver/nvidia/*` is visible inside Pods on a host with an NVIDIA driver, even when no GPU was ever attached
+## 2026-11-07 - A hand-patched extended-resource count is still present after a kubelet restart (sampled for 30s) but is lost with Node deletion
 
-While writing chapter 15's "a count is not a device" check, looked for
-anything GPU-related inside a Pod that had been scheduled against a fake
-`nvidia.com/gpu` count. `/dev/nvidia*`, `NVIDIA_*`/`CUDA_*` environment
-variables, `nvidia-smi` and nvidia mounts were all absent, as expected -
-but `cat /proc/driver/nvidia/version` succeeded and printed the host's
-driver version, and the files under `/proc/driver/nvidia/` described the
-host's real GPU. `/proc` is the host kernel's, shared with every container
-on the machine, so those files exist inside a kind node and inside its Pods
-whenever the host has the kernel driver loaded, regardless of what the Pod
-requested.
-
-Lesson: on a host with an NVIDIA driver, `/proc/driver/nvidia` is not
-evidence that anything was attached to a container - and on a host without
-one it will be absent, so a check that uses it gives different answers on
-different machines. The chapter checks device files, environment variables
-and a driver tool instead. Captures from a host that has the driver can
-carry host-specific details (model, driver version); keep them out of the
-repo.
+On kind v0.33.0 / `kindest/node:v1.36.1`, a count written with
+`kubectl patch node ... --subresource=status` was still in `capacity` and
+`allocatable` 30s after `systemctl restart kubelet` on the node. Deleting
+the Node object and restarting the kubelet re-registered the node with no
+count.
 
 ## 2026-11-06 - `kubectl patch node` without `--subresource=status` succeeds and does nothing
 
