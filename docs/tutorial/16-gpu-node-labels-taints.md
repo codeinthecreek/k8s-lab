@@ -78,9 +78,7 @@ appear for the first time:
   reports `Ready`, so the patches don't race a worker that is still
   joining.
 - `kubectl wait --for=jsonpath='{...}'=2 node/...` blocks until the named
-  field has that value. Chapter 15 pauses and re-checks `allocatable`;
-  here the wait is on the field itself, which becomes `2` a few seconds
-  after the `capacity` patch.
+  field has that value. Here the field is `allocatable`.
 
 **Example**: on a fresh `gpu-fake` cluster (`make up PROFILE=gpu-fake`),
 from the repository root:

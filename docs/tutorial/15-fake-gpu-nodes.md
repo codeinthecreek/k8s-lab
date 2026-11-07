@@ -53,6 +53,7 @@ advertises a GPU yet, and the first step is to see that for ourselves.
 
 ```
 make up PROFILE=gpu-fake
+kubectl wait --for=condition=Ready node --all --timeout=120s
 kubectl get nodes
 kubectl get nodes -o custom-columns='NAME:.metadata.name,CAPACITY:.status.capacity.nvidia\.com/gpu,ALLOCATABLE:.status.allocatable.nvidia\.com/gpu'
 ```
@@ -62,19 +63,23 @@ The `custom-columns` expression is this chapter's lens on the cluster.
 contains a dot, so the dot is escaped with a backslash. A node that has
 no such key prints `<none>`.
 
-**Expected output** (the `make up` output is trimmed to its last lines):
+**Expected output** (the `make up` output is trimmed):
 
 ```
- • Ready after 15s 💚
 Set kubectl context to "kind-k8s-lab-gpu-fake"
 ...
 --- applying manifests from kind/profiles/gpu-fake/manifests.txt ---
 
+$ kubectl wait --for=condition=Ready node --all --timeout=120s
+node/k8s-lab-gpu-fake-control-plane condition met
+node/k8s-lab-gpu-fake-worker condition met
+node/k8s-lab-gpu-fake-worker2 condition met
+
 $ kubectl get nodes
-NAME                             STATUS     ROLES           AGE   VERSION
-k8s-lab-gpu-fake-control-plane   Ready      control-plane   34s   v1.36.1
-k8s-lab-gpu-fake-worker          NotReady   <none>          15s   v1.36.1
-k8s-lab-gpu-fake-worker2         NotReady   <none>          15s   v1.36.1
+NAME                             STATUS   ROLES           AGE   VERSION
+k8s-lab-gpu-fake-control-plane   Ready    control-plane   45s   v1.36.1
+k8s-lab-gpu-fake-worker          Ready    <none>          24s   v1.36.1
+k8s-lab-gpu-fake-worker2         Ready    <none>          24s   v1.36.1
 
 $ kubectl get nodes -o custom-columns='NAME:.metadata.name,CAPACITY:.status.capacity.nvidia\.com/gpu,ALLOCATABLE:.status.allocatable.nvidia\.com/gpu'
 NAME                             CAPACITY   ALLOCATABLE
@@ -83,158 +88,57 @@ k8s-lab-gpu-fake-worker          <none>     <none>
 k8s-lab-gpu-fake-worker2         <none>     <none>
 ```
 
-`make up` waits only for the control-plane node, so the workers can
-still show `NotReady` for a few seconds; re-run `kubectl get nodes`
-until all three are `Ready` before going on. The second table is the
-baseline: no node has any `nvidia.com/gpu`, capacity or allocatable.
+`make up` waits only for the control-plane node, so
+`kubectl wait --for=condition=Ready node --all` blocks until the workers
+are `Ready` too. The second table is the baseline: no node has any
+`nvidia.com/gpu`, capacity or allocatable.
 
 ### Advertising a resource the node doesn't have
 
-**Why**: a Node's `status` is the kubelet's report of what the node has.
-We are going to write to it by hand. The obvious command doesn't work,
-and the way it fails is worth seeing once: `kubectl patch node` on its
-own succeeds and changes nothing. The `status` of a Node is served
-through a separate subresource, and `kubectl patch --subresource=status`
-is what targets it.
+**Why**: a Node's `status` is the kubelet's report of what the node has. On
+a real cluster the device plugin is what puts a GPU count there - the
+*advertise* job described at the end of this chapter. This lab has no
+plugin, so we write the count ourselves, as a stand-in. The `status` of a
+Node is served through a separate subresource, and `kubectl patch
+--subresource=status` is what targets it; a plain `kubectl patch node`
+prints `patched (no change)` and changes nothing (`docs/findings.md` has
+the details).
 
 The patch is a JSON patch, so the path is a JSON Pointer, and a `/`
 inside a key has to be written `~1` - hence `nvidia.com~1gpu`. This
-advertises 2 on one worker and leaves the other bare.
+advertises 2 on one worker and leaves the other bare. We write only
+`capacity`; the node fills in `allocatable` without any action from us,
+so the wait is on `allocatable`:
+`kubectl wait --for=jsonpath='{...}'=2` blocks until that field has the
+value, and fails after the timeout.
 
-**Example**: first without the subresource, then with it, then the lens
-from the previous section (once immediately and once after a short wait):
+**Example**:
 
 ```
-kubectl patch node k8s-lab-gpu-fake-worker --type=json -p '[{"op":"add","path":"/status/capacity/nvidia.com~1gpu","value":"2"}]'
-kubectl get nodes -o custom-columns='NAME:.metadata.name,CAPACITY:.status.capacity.nvidia\.com/gpu,ALLOCATABLE:.status.allocatable.nvidia\.com/gpu'
 kubectl patch node k8s-lab-gpu-fake-worker --subresource=status --type=json -p '[{"op":"add","path":"/status/capacity/nvidia.com~1gpu","value":"2"}]'
-kubectl get nodes -o custom-columns='NAME:.metadata.name,CAPACITY:.status.capacity.nvidia\.com/gpu,ALLOCATABLE:.status.allocatable.nvidia\.com/gpu'
-sleep 10
+kubectl wait --for=jsonpath='{.status.allocatable.nvidia\.com/gpu}'=2 node/k8s-lab-gpu-fake-worker --timeout=60s
 kubectl get nodes -o custom-columns='NAME:.metadata.name,CAPACITY:.status.capacity.nvidia\.com/gpu,ALLOCATABLE:.status.allocatable.nvidia\.com/gpu'
 ```
 
 **Expected output**:
 
 ```
-$ kubectl patch node k8s-lab-gpu-fake-worker --type=json -p '[{"op":"add","path":"/status/capacity/nvidia.com~1gpu","value":"2"}]'
-node/k8s-lab-gpu-fake-worker patched (no change)
-
-NAME                             CAPACITY   ALLOCATABLE
-k8s-lab-gpu-fake-control-plane   <none>     <none>
-k8s-lab-gpu-fake-worker          <none>     <none>
-k8s-lab-gpu-fake-worker2         <none>     <none>
-
 $ kubectl patch node k8s-lab-gpu-fake-worker --subresource=status --type=json -p '[{"op":"add","path":"/status/capacity/nvidia.com~1gpu","value":"2"}]'
 node/k8s-lab-gpu-fake-worker patched
 
-NAME                             CAPACITY   ALLOCATABLE
-k8s-lab-gpu-fake-control-plane   <none>     <none>
-k8s-lab-gpu-fake-worker          2          <none>
-k8s-lab-gpu-fake-worker2         <none>     <none>
+$ kubectl wait --for=jsonpath='{.status.allocatable.nvidia\.com/gpu}'=2 node/k8s-lab-gpu-fake-worker --timeout=60s
+node/k8s-lab-gpu-fake-worker condition met
 
-$ sleep 10
-
+$ kubectl get nodes -o custom-columns='NAME:.metadata.name,CAPACITY:.status.capacity.nvidia\.com/gpu,ALLOCATABLE:.status.allocatable.nvidia\.com/gpu'
 NAME                             CAPACITY   ALLOCATABLE
 k8s-lab-gpu-fake-control-plane   <none>     <none>
 k8s-lab-gpu-fake-worker          2          2
 k8s-lab-gpu-fake-worker2         <none>     <none>
 ```
 
-(The `get nodes` blocks above are the same command each time; its
-`$ ...` line is dropped after the first appearance to keep the output
-readable.) Three things to take from it:
-
-- The un-subresourced patch prints `patched (no change)` - a success
-  message, and no effect. A script that checks only the exit status
-  would miss it; check the result.
-- We wrote only `capacity`. `allocatable` stayed empty for a moment and
-  then filled in with the same value without any action from us. The
-  gap varied between runs in this lab, from a couple of seconds to about
-  ten; that is what was measured here, not a guarantee.
-- `worker2` is untouched. One worker now has 2 of something, the other
-  has none, and the next steps depend on that asymmetry.
-
-### How long the value lasts
-
-**Why**: the number is stored on the Node object, written by us, not
-detected by the kubelet from any hardware. That raises an obvious
-question: what erases it? Two things to try on the worker that has it -
-restart its kubelet, then delete the Node object entirely and restart the
-kubelet again so the node registers itself anew.
-
-**Example**:
-
-```
-docker exec k8s-lab-gpu-fake-worker systemctl restart kubelet
-sleep 15
-kubectl get nodes -o custom-columns='NAME:.metadata.name,CAPACITY:.status.capacity.nvidia\.com/gpu,ALLOCATABLE:.status.allocatable.nvidia\.com/gpu'
-kubectl delete node k8s-lab-gpu-fake-worker
-docker exec k8s-lab-gpu-fake-worker systemctl restart kubelet
-sleep 15
-kubectl get nodes
-kubectl get nodes -o custom-columns='NAME:.metadata.name,CAPACITY:.status.capacity.nvidia\.com/gpu,ALLOCATABLE:.status.allocatable.nvidia\.com/gpu'
-```
-
-**Expected output**: after the first restart, nothing changed. After
-the delete and second restart the node is back but brand new (note its
-`AGE`), and the value is gone:
-
-```
-$ sleep 15
-
-NAME                             CAPACITY   ALLOCATABLE
-k8s-lab-gpu-fake-control-plane   <none>     <none>
-k8s-lab-gpu-fake-worker          2          2
-k8s-lab-gpu-fake-worker2         <none>     <none>
-
-$ kubectl delete node k8s-lab-gpu-fake-worker
-node "k8s-lab-gpu-fake-worker" deleted
-
-$ kubectl get nodes
-NAME                             STATUS   ROLES           AGE   VERSION
-k8s-lab-gpu-fake-control-plane   Ready    control-plane   76s   v1.36.1
-k8s-lab-gpu-fake-worker          Ready    <none>          15s   v1.36.1
-k8s-lab-gpu-fake-worker2         Ready    <none>          57s   v1.36.1
-
-NAME                             CAPACITY   ALLOCATABLE
-k8s-lab-gpu-fake-control-plane   <none>     <none>
-k8s-lab-gpu-fake-worker          <none>     <none>
-k8s-lab-gpu-fake-worker2         <none>     <none>
-```
-
-Other checks in this lab, not repeated here: the value also survived
-`docker restart` of the worker's container and a full periodic status
-report from the kubelet (one arrived about six minutes after the
-previous one in a timed run). In a separate check, after the Node object
-was deleted, no replacement appeared on its own during the 60 seconds
-watched; it took the kubelet restart. So, for everything tried in this
-lab, the value stays as long as the Node object does - restarts didn't
-remove it, deleting the Node did, and so did recreating the cluster.
-
-Put the 2 back on the worker so the rest of the chapter has something to
-schedule against:
-
-```
-kubectl patch node k8s-lab-gpu-fake-worker --subresource=status --type=json -p '[{"op":"add","path":"/status/capacity/nvidia.com~1gpu","value":"2"}]'
-sleep 10
-kubectl get nodes -o custom-columns='NAME:.metadata.name,CAPACITY:.status.capacity.nvidia\.com/gpu,ALLOCATABLE:.status.allocatable.nvidia\.com/gpu'
-```
-
-```
-$ kubectl patch node k8s-lab-gpu-fake-worker --subresource=status --type=json -p '[{"op":"add","path":"/status/capacity/nvidia.com~1gpu","value":"2"}]'
-node/k8s-lab-gpu-fake-worker patched
-
-$ sleep 10
-
-NAME                             CAPACITY   ALLOCATABLE
-k8s-lab-gpu-fake-control-plane   <none>     <none>
-k8s-lab-gpu-fake-worker          2          2
-k8s-lab-gpu-fake-worker2         <none>     <none>
-```
-
-So far: a node can carry a made-up resource count, it appears in
-`allocatable` a few seconds after we write `capacity`, and it lasts as
-long as the Node object. Nothing has asked for it yet.
+`worker2` is untouched. One worker now has 2 of something, the other
+has none, and the next sections depend on that asymmetry. Nothing has
+asked for the count yet.
 
 ### Requesting one GPU
 
@@ -273,7 +177,7 @@ deployment "gpu-demo" successfully rolled out
 
 $ kubectl get pods -n gpu-demo -o wide
 NAME                       READY   STATUS    RESTARTS   AGE   IP           NODE                      NOMINATED NODE   READINESS GATES
-gpu-demo-66ff46d76-f7k65   1/1     Running   0          9s    10.244.3.2   k8s-lab-gpu-fake-worker   <none>           <none>
+gpu-demo-66ff46d76-tp5bc   1/1     Running   0          9s    10.244.2.2   k8s-lab-gpu-fake-worker   <none>           <none>
 
 $ kubectl get pods -n gpu-demo -l app=gpu-demo -o jsonpath='{.items[0].spec.containers[0].resources}{"\n"}'
 {"limits":{"nvidia.com/gpu":"1"},"requests":{"nvidia.com/gpu":"1"}}
@@ -303,38 +207,49 @@ worker advertises 2. Scale the Deployment to 2 and both Pods fit; scale
 to 3 and there is nowhere left - the other worker has no GPU count at
 all, and the control-plane node has none either.
 
+Three `kubectl wait` commands make sure the state has settled before
+reading the result.
+The first two, `--for=jsonpath=...`, block until the Deployment reports 3
+Pods and 2 of them Ready. The third, `--for=condition=PodScheduled=false`,
+blocks until the scheduler has tried a Pod and not placed it. It runs
+last because a Pod that is scheduled but still starting is also
+`Pending`, so waiting for the two Ready replicas first leaves only the
+unplaceable Pod for the `Pending` selector to match.
+
 **Example**:
 
 ```
 kubectl scale deployment/gpu-demo -n gpu-demo --replicas=2
 kubectl rollout status deployment/gpu-demo -n gpu-demo --timeout=120s
 kubectl scale deployment/gpu-demo -n gpu-demo --replicas=3
-sleep 5
+kubectl wait --for=jsonpath='{.status.replicas}'=3 deployment/gpu-demo -n gpu-demo --timeout=60s
+kubectl wait --for=jsonpath='{.status.readyReplicas}'=2 deployment/gpu-demo -n gpu-demo --timeout=60s
+kubectl wait --for=condition=PodScheduled=false pod --field-selector=status.phase=Pending -l app=gpu-demo -n gpu-demo --timeout=60s
 kubectl get pods -n gpu-demo -o wide
 kubectl get events -n gpu-demo --field-selector reason=FailedScheduling
 kubectl get nodes -o custom-columns='NAME:.metadata.name,TAINTS:.spec.taints[*].key'
 ```
 
-**Expected output** (`scale` and `rollout status` output trimmed): the
+**Expected output** (`scale`, `rollout status` and `wait` output trimmed): the
 first two Pods share the advertised worker; the third is `Pending` with
 no node:
 
 ```
 $ kubectl get pods -n gpu-demo -o wide
 NAME                       READY   STATUS    RESTARTS   AGE   IP           NODE                      NOMINATED NODE   READINESS GATES
-gpu-demo-66ff46d76-5dkht   1/1     Running   0          7s    10.244.3.3   k8s-lab-gpu-fake-worker   <none>           <none>
-gpu-demo-66ff46d76-6tk9h   0/1     Pending   0          5s    <none>       <none>                    <none>           <none>
-gpu-demo-66ff46d76-f7k65   1/1     Running   0          17s   10.244.3.2   k8s-lab-gpu-fake-worker   <none>           <none>
+gpu-demo-66ff46d76-d7bd8   0/1     Pending   0          1s    <none>       <none>                    <none>           <none>
+gpu-demo-66ff46d76-rcld9   1/1     Running   0          4s    10.244.2.3   k8s-lab-gpu-fake-worker   <none>           <none>
+gpu-demo-66ff46d76-tp5bc   1/1     Running   0          13s   10.244.2.2   k8s-lab-gpu-fake-worker   <none>           <none>
 
 $ kubectl get events -n gpu-demo --field-selector reason=FailedScheduling
 LAST SEEN   TYPE      REASON             OBJECT                         MESSAGE
-5s          Warning   FailedScheduling   pod/gpu-demo-66ff46d76-6tk9h   0/3 nodes are available: 1 node(s) had untolerated taint(s), 2 Insufficient nvidia.com/gpu. no new claims to deallocate, preemption: 0/3 nodes are available: 1 No preemption victims found for incoming pod, 2 Preemption is not helpful for scheduling.
+0s          Warning   FailedScheduling   pod/gpu-demo-66ff46d76-d7bd8   0/3 nodes are available: 1 node(s) had untolerated taint(s), 2 Insufficient nvidia.com/gpu. no new claims to deallocate, preemption: 0/3 nodes are available: 1 No preemption victims found for incoming pod, 2 Preemption is not helpful for scheduling.
 ```
 
 `Insufficient nvidia.com/gpu` is the whole diagnosis. The message counts
-nodes rather than naming them. The full worker and the bare worker both land in `2 Insufficient
-nvidia.com/gpu`, and the `1 node(s) had untolerated taint(s)` is the
-control-plane node. The trailing preemption clauses are the scheduler's
+nodes rather than naming them. The full worker and the bare worker both
+land in `2 Insufficient nvidia.com/gpu`, and the `1 node(s) had
+untolerated taint(s)` is the control-plane node. The trailing preemption clauses are the scheduler's
 check for whether evicting other Pods would help; the order of those two
 clauses varied from run to run in this lab. The taint command above
 shows which node the taint count refers to:
@@ -364,53 +279,40 @@ anything has to be done to the Pod.
 
 ```
 kubectl patch node k8s-lab-gpu-fake-worker2 --subresource=status --type=json -p '[{"op":"add","path":"/status/capacity/nvidia.com~1gpu","value":"1"}]'
-kubectl get nodes -o custom-columns='NAME:.metadata.name,CAPACITY:.status.capacity.nvidia\.com/gpu,ALLOCATABLE:.status.allocatable.nvidia\.com/gpu'
-sleep 10
+kubectl wait --for=jsonpath='{.status.allocatable.nvidia\.com/gpu}'=1 node/k8s-lab-gpu-fake-worker2 --timeout=60s
+kubectl rollout status deployment/gpu-demo -n gpu-demo --timeout=120s
 kubectl get nodes -o custom-columns='NAME:.metadata.name,CAPACITY:.status.capacity.nvidia\.com/gpu,ALLOCATABLE:.status.allocatable.nvidia\.com/gpu'
 kubectl get pods -n gpu-demo -o wide
 kubectl get events -n gpu-demo --field-selector reason=Scheduled
 ```
 
-**Expected output**: the same Pod - `gpu-demo-66ff46d76-6tk9h`, the one
-that was `Pending` - is now assigned to `worker2`, with no change made
-to the Pod or the Deployment:
+**Expected output** (`patch`, `wait` and `rollout status` output
+trimmed): the same Pod - `gpu-demo-66ff46d76-d7bd8`, the one that was
+`Pending` - is now assigned to `worker2`, with no change made to the Pod
+or the Deployment:
 
 ```
-$ kubectl patch node k8s-lab-gpu-fake-worker2 --subresource=status --type=json -p '[{"op":"add","path":"/status/capacity/nvidia.com~1gpu","value":"1"}]'
-node/k8s-lab-gpu-fake-worker2 patched
-
-NAME                             CAPACITY   ALLOCATABLE
-k8s-lab-gpu-fake-control-plane   <none>     <none>
-k8s-lab-gpu-fake-worker          2          2
-k8s-lab-gpu-fake-worker2         1          <none>
-
-$ sleep 10
-
+$ kubectl get nodes -o custom-columns='NAME:.metadata.name,CAPACITY:.status.capacity.nvidia\.com/gpu,ALLOCATABLE:.status.allocatable.nvidia\.com/gpu'
 NAME                             CAPACITY   ALLOCATABLE
 k8s-lab-gpu-fake-control-plane   <none>     <none>
 k8s-lab-gpu-fake-worker          2          2
 k8s-lab-gpu-fake-worker2         1          1
 
 $ kubectl get pods -n gpu-demo -o wide
-NAME                       READY   STATUS              RESTARTS   AGE   IP           NODE                       NOMINATED NODE   READINESS GATES
-gpu-demo-66ff46d76-5dkht   1/1     Running             0          18s   10.244.3.3   k8s-lab-gpu-fake-worker    <none>           <none>
-gpu-demo-66ff46d76-6tk9h   0/1     ContainerCreating   0          16s   <none>       k8s-lab-gpu-fake-worker2   <none>           <none>
-gpu-demo-66ff46d76-f7k65   1/1     Running             0          28s   10.244.3.2   k8s-lab-gpu-fake-worker    <none>           <none>
+NAME                       READY   STATUS    RESTARTS   AGE   IP           NODE                       NOMINATED NODE   READINESS GATES
+gpu-demo-66ff46d76-d7bd8   1/1     Running   0          17s   10.244.1.2   k8s-lab-gpu-fake-worker2   <none>           <none>
+gpu-demo-66ff46d76-rcld9   1/1     Running   0          20s   10.244.2.3   k8s-lab-gpu-fake-worker    <none>           <none>
+gpu-demo-66ff46d76-tp5bc   1/1     Running   0          29s   10.244.2.2   k8s-lab-gpu-fake-worker    <none>           <none>
 
 $ kubectl get events -n gpu-demo --field-selector reason=Scheduled
 LAST SEEN   TYPE     REASON      OBJECT                         MESSAGE
-18s         Normal   Scheduled   pod/gpu-demo-66ff46d76-5dkht   Successfully assigned gpu-demo/gpu-demo-66ff46d76-5dkht to k8s-lab-gpu-fake-worker
-4s          Normal   Scheduled   pod/gpu-demo-66ff46d76-6tk9h   Successfully assigned gpu-demo/gpu-demo-66ff46d76-6tk9h to k8s-lab-gpu-fake-worker2
-28s         Normal   Scheduled   pod/gpu-demo-66ff46d76-f7k65   Successfully assigned gpu-demo/gpu-demo-66ff46d76-f7k65 to k8s-lab-gpu-fake-worker
+10s         Normal   Scheduled   pod/gpu-demo-66ff46d76-d7bd8   Successfully assigned gpu-demo/gpu-demo-66ff46d76-d7bd8 to k8s-lab-gpu-fake-worker2
+19s         Normal   Scheduled   pod/gpu-demo-66ff46d76-rcld9   Successfully assigned gpu-demo/gpu-demo-66ff46d76-rcld9 to k8s-lab-gpu-fake-worker
+29s         Normal   Scheduled   pod/gpu-demo-66ff46d76-tp5bc   Successfully assigned gpu-demo/gpu-demo-66ff46d76-tp5bc to k8s-lab-gpu-fake-worker
 ```
 
-The sequence to read off it: `capacity` changed at once; `allocatable`
-followed a few seconds later; and the Pending Pod was assigned right
-after that. The assignment followed the
-`allocatable` update, so the delay from the patch to the assignment
-tracked that same gap - from a couple of seconds to about ten across
-runs in this lab; again, a measurement from this lab and not a promise. The Pod needed nothing - no delete, no
-re-create, no annotation.
+The Pod needed nothing - no delete, no re-create, no annotation: once
+`worker2` had the room, the Pending Pod was placed there.
 
 Taken together, the last three sections are the scheduling half of the
 whole GPU story: a count on nodes, a count in Pod specs, and a
@@ -444,7 +346,7 @@ kubectl apply -f tutorial/examples/gpu/fake-gpu-requests-only-pod.yaml
 kubectl apply -f tutorial/examples/gpu/fake-gpu-request-ne-limit-pod.yaml
 kubectl apply -f tutorial/examples/gpu/fake-gpu-fractional-pod.yaml
 kubectl apply -f tutorial/examples/gpu/fake-gpu-limit-3-pod.yaml
-sleep 5
+kubectl wait --for=condition=PodScheduled=false pod/gpu-limit-3 -n gpu-demo --timeout=60s
 kubectl get pod gpu-limit-3 -n gpu-demo
 kubectl get events -n gpu-demo --field-selector involvedObject.name=gpu-limit-3
 kubectl apply -f tutorial/examples/gpu/fake-gpu-limit-0-pod.yaml
@@ -478,11 +380,11 @@ pod/gpu-limit-3 created
 
 $ kubectl get pod gpu-limit-3 -n gpu-demo
 NAME          READY   STATUS    RESTARTS   AGE
-gpu-limit-3   0/1     Pending   0          5s
+gpu-limit-3   0/1     Pending   0          1s
 
 $ kubectl get events -n gpu-demo --field-selector involvedObject.name=gpu-limit-3
 LAST SEEN   TYPE      REASON             OBJECT            MESSAGE
-6s          Warning   FailedScheduling   pod/gpu-limit-3   0/3 nodes are available: 1 node(s) had untolerated taint(s), 2 Insufficient nvidia.com/gpu. no new claims to deallocate, preemption: 0/3 nodes are available: 3 Preemption is not helpful for scheduling.
+1s          Warning   FailedScheduling   pod/gpu-limit-3   0/3 nodes are available: 1 node(s) had untolerated taint(s), 2 Insufficient nvidia.com/gpu. no new claims to deallocate, preemption: 0/3 nodes are available: 3 Preemption is not helpful for scheduling.
 
 $ kubectl apply -f tutorial/examples/gpu/fake-gpu-limit-0-pod.yaml
 pod/gpu-limit-0 created
@@ -490,8 +392,8 @@ pod/gpu-limit-0 created
 $ kubectl get pods -n gpu-demo
 NAME              READY   STATUS    RESTARTS   AGE
 gpu-limit-0       1/1     Running   0          2s
-gpu-limit-3       0/1     Pending   0          8s
-gpu-limits-only   1/1     Running   0          9s
+gpu-limit-3       0/1     Pending   0          3s
+gpu-limits-only   1/1     Running   0          4s
 
 $ kubectl delete pod gpu-limits-only gpu-limit-3 gpu-limit-0 -n gpu-demo
 pod "gpu-limits-only" deleted from gpu-demo namespace
@@ -591,14 +493,13 @@ chapter 16, next, stays with scheduling against the fake counts.
 ### Teardown
 
 **Why**: the namespace holds every Pod and the Deployment from this
-chapter, so deleting it cleans up in one step. The advertised counts live
-on the Node objects, so they are removed with the same subresource patch,
-using `remove` instead of `add`. Do that after the Pods are gone, not
-before: in a separate check in this lab, with three GPU Pods running and
-a fourth Pending, removing the key from both nodes left the three
-running (no restarts, no events) and the fourth Pending - the count
-disappearing from the Node does not evict anything, and it strands
-whatever was waiting on it.
+chapter, so deleting it cleans up in one step - Pods first. The advertised
+counts live on the Node objects, so they are removed with the same
+subresource patch, using `remove` instead of `add`. To wait for the
+removal, this chapter uses a shell loop: `until [ -z "$(kubectl get node
+... -o jsonpath=...)" ]; do sleep 1; done` re-reads `allocatable` once a
+second and stops when it is empty. A loop prints nothing; the table after
+it is the check.
 
 Deleting the cluster would discard the counts too, so the removal is
 optional if you are about to run `make down`; it is shown because it is
@@ -611,7 +512,8 @@ the cluster for a different experiment.
 kubectl delete namespace gpu-demo
 kubectl patch node k8s-lab-gpu-fake-worker --subresource=status --type=json -p '[{"op":"remove","path":"/status/capacity/nvidia.com~1gpu"}]'
 kubectl patch node k8s-lab-gpu-fake-worker2 --subresource=status --type=json -p '[{"op":"remove","path":"/status/capacity/nvidia.com~1gpu"}]'
-sleep 10
+until [ -z "$(kubectl get node k8s-lab-gpu-fake-worker -o jsonpath='{.status.allocatable.nvidia\.com/gpu}')" ]; do sleep 1; done
+until [ -z "$(kubectl get node k8s-lab-gpu-fake-worker2 -o jsonpath='{.status.allocatable.nvidia\.com/gpu}')" ]; do sleep 1; done
 kubectl get nodes -o custom-columns='NAME:.metadata.name,CAPACITY:.status.capacity.nvidia\.com/gpu,ALLOCATABLE:.status.allocatable.nvidia\.com/gpu'
 make down PROFILE=gpu-fake
 kind get clusters
@@ -629,8 +531,7 @@ node/k8s-lab-gpu-fake-worker patched
 $ kubectl patch node k8s-lab-gpu-fake-worker2 --subresource=status --type=json -p '[{"op":"remove","path":"/status/capacity/nvidia.com~1gpu"}]'
 node/k8s-lab-gpu-fake-worker2 patched
 
-$ sleep 10
-
+$ kubectl get nodes -o custom-columns='NAME:.metadata.name,CAPACITY:.status.capacity.nvidia\.com/gpu,ALLOCATABLE:.status.allocatable.nvidia\.com/gpu'
 NAME                             CAPACITY   ALLOCATABLE
 k8s-lab-gpu-fake-control-plane   <none>     <none>
 k8s-lab-gpu-fake-worker          <none>     <none>
@@ -639,7 +540,7 @@ k8s-lab-gpu-fake-worker2         <none>     <none>
 $ make down PROFILE=gpu-fake
 kind delete cluster --name k8s-lab-gpu-fake
 Deleting cluster "k8s-lab-gpu-fake" ...
-Deleted nodes: ["k8s-lab-gpu-fake-worker" "k8s-lab-gpu-fake-control-plane" "k8s-lab-gpu-fake-worker2"]
+Deleted nodes: ["k8s-lab-gpu-fake-control-plane" "k8s-lab-gpu-fake-worker" "k8s-lab-gpu-fake-worker2"]
 
 $ kind get clusters
 No kind clusters found.
