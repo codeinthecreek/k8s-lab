@@ -32,7 +32,7 @@ makes obvious, by contrast, what a count alone does *not* do.
 subresource, scheduling against it, the rules for requesting it, and
 showing that nothing is attached to the container. **Not covered here**:
 GPU node labels and taints (chapter 16), and, in later chapters of this
-section, device plugins (taken up in the real-GPU chapter),
+section, device plugins (taken up in [chapter 17](17-real-gpu-device-plugin.md)),
 ResourceQuota for GPUs, queueing systems, GPU sharing, and real GPUs.
 
 Verified against: kind v0.33.0, `kindest/node:v1.36.1` (the `gpu-fake`
@@ -487,7 +487,7 @@ terms of this chapter, that mechanism has two jobs: *advertise* - put an
 honest count into the Node's status, which we did by hand with a patch -
 and *allocate* - when a Pod that requested the resource starts, hand the
 container what it needs to use the device, which nothing did here. Device
-plugins are taken up in the real-GPU chapter later in this section;
+plugins are taken up in [chapter 17](17-real-gpu-device-plugin.md), later in this section;
 chapter 16, next, stays with scheduling against the fake counts.
 
 ### Teardown
