@@ -1,6 +1,6 @@
 # High-priority Pod using the default preemptionPolicy
 # (PreemptLowerPriority): if it cannot fit, the scheduler may evict
-# lower-priority Pods to make room. See docs/tutorial/07-scheduling.md
+# lower-priority Pods to make room. See tutorial/07-scheduling.md
 # (PriorityClass and preemption).
 #
 # NOT directly appliable: __HIGH_CPU__ is a placeholder computed from the

@@ -106,7 +106,7 @@ by hand, verify the field afterwards rather than trusting the exit code.
 ## 2026-09-03 - A custom `NodeResourcesFit` scoring strategy alone doesn't bin-pack - `PodTopologySpread`'s default weight outvotes it
 
 While writing the tutorial's scheduler-configuration material
-(`docs/tutorial/14-advanced-topics.md`), built a second named scheduling
+(`tutorial/14-advanced-topics.md`), built a second named scheduling
 profile (`bin-packing-scheduler`) scoring `NodeResourcesFit` with
 `MostAllocated` instead of the compiled-in default (`LeastAllocated`),
 expecting six replicas under that profile to consolidate onto one of
@@ -145,7 +145,7 @@ re-reading the file you just wrote.
 ## 2026-09-03 - kubeadm's admin client cert is no longer in `system:masters` - it's a real, inspectable RBAC group
 
 While writing the tutorial's x509 client-certificate material
-(`docs/tutorial/09-security.md`), went to decode this cluster's own
+(`tutorial/09-security.md`), went to decode this cluster's own
 admin client cert out of kubeconfig to demonstrate CN-to-username and
 O-to-group mapping, expecting the classic `O=system:masters` - the
 hardcoded superuser group most existing Kubernetes material assumes
@@ -178,7 +178,7 @@ version-behavior claims from memory applies here too.
 ## 2026-09-03 - `kubectl describe -l <selector>` silently drops the Events section when the selector matches multiple Pods
 
 While writing the tutorial's failure-diagnosis material
-(`docs/tutorial/10-observability.md`), assumed `kubectl describe pod -l
+(`tutorial/10-observability.md`), assumed `kubectl describe pod -l
 <selector>` behaves like `kubectl describe pod <name>` with the
 convenience of not having to know the exact Pod name - both print the
 same per-Pod sections for whatever Pods they resolve to. Checked live
@@ -202,7 +202,7 @@ section itself is what's actually needed.
 ## 2026-08-30 - kind's "config_path patch not needed on kind v0.27.0+ images" doesn't hold for this repo's pinned image
 
 While building the tutorial's developer-journey chapter
-(`docs/tutorial/13-app-deployment.md`) around a real local registry
+(`tutorial/13-app-deployment.md`) around a real local registry
 (`lab-helpers/registry`), started from kind's own
 `kind-with-registry.sh` example, which includes a `containerdConfigPatches`
 block setting `[plugins."io.containerd.grpc.v1.cri".registry] config_path
@@ -253,7 +253,7 @@ the identical locally-loaded image works fine (no pull attempted at all).
 This is exactly why `lab-helpers/registry` (a real registry the node
 actually pulls from) exists as this tutorial's answer for testing
 `imagePullPolicy: Always` against a self-built image, rather than `kind
-load docker-image` - see `docs/tutorial/13-app-deployment.md`.
+load docker-image` - see `tutorial/13-app-deployment.md`.
 
 Separately, and worth knowing if the "already present" messaging looks
 inconsistent across nodes: `kind load docker-image` deduplicates by image
@@ -267,7 +267,7 @@ expect `kind load`'s output to be identical across every node every time.
 
 ## 2026-08-28 - kindnetd now enforces NetworkPolicy - "kindnet doesn't enforce it" is no longer a safe assumption
 
-While writing the tutorial's security chapter (`docs/tutorial/09-security.md`),
+While writing the tutorial's security chapter (`tutorial/09-security.md`),
 applied a NetworkPolicy on the `default` profile expecting kindnetd to
 silently ignore it (the API accepts a NetworkPolicy object regardless of
 whether any CNI enforces it - only genuinely testing traffic proves

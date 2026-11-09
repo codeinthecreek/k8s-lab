@@ -2,7 +2,7 @@
 # ingress-nginx (manifests/ingress/ingress-nginx.yaml, applied by the
 # default profile's manifests.txt). ingressClassName: nginx matches the
 # IngressClass that manifest creates. See
-# docs/tutorial/05-services-networking.md.
+# tutorial/05-services-networking.md.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

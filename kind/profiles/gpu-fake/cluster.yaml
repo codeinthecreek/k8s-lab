@@ -1,6 +1,6 @@
 # gpu-fake profile: 1 control-plane + 2 workers, no ingress, no add-ons.
 #
-# Used by the tutorial's GPU section (docs/tutorial/15-*.md onward). Same
+# Used by the tutorial's GPU section (tutorial/15-*.md onward). Same
 # pinned node image/digest as the default profile - see
 # kind/profiles/default/cluster.yaml for the version source. No GPU is
 # present or configured here: the section's first chapters advertise a

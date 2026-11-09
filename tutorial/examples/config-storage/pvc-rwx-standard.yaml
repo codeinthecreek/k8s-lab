@@ -1,6 +1,6 @@
 # Requests ReadWriteMany against the default StorageClass (kind's
 # rancher.io/local-path) to demonstrate that provisioner's hard
-# ReadWriteOnce-only restriction. See docs/tutorial/04-config-storage.md.
+# ReadWriteOnce-only restriction. See tutorial/04-config-storage.md.
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:

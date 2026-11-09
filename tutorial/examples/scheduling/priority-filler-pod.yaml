@@ -1,5 +1,5 @@
 # Low-priority "filler" that occupies most of one worker's free CPU, so a
-# higher-priority Pod cannot fit beside it. See docs/tutorial/07-scheduling.md
+# higher-priority Pod cannot fit beside it. See tutorial/07-scheduling.md
 # (PriorityClass and preemption).
 #
 # NOT directly appliable: __FILL_CPU__ is a placeholder for a value computed

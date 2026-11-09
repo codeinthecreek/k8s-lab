@@ -1,7 +1,7 @@
 # Consumes config-storage-demo-omitted-scn-pvc - needed to actually
 # trigger binding, since the default StorageClass uses
 # volumeBindingMode: WaitForFirstConsumer (nothing provisions until a
-# Pod references the PVC). See docs/tutorial/04-config-storage.md.
+# Pod references the PVC). See tutorial/04-config-storage.md.
 apiVersion: v1
 kind: Pod
 metadata:

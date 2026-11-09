@@ -1,4 +1,4 @@
-# See docs/tutorial/03-workloads.md - a Deployment manages ReplicaSets
+# See tutorial/03-workloads.md - a Deployment manages ReplicaSets
 # the way a ReplicaSet manages Pods, one layer up, to get rolling updates.
 apiVersion: apps/v1
 kind: Deployment

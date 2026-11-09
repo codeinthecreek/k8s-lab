@@ -1,7 +1,7 @@
 # Mounts config-storage-demo-hostpath-pvc. Pinned to the same node as
 # the PV's hostPath directory via nodeSelector - the PV's nodeAffinity
 # would otherwise leave the Pod unschedulable if it landed elsewhere.
-# See docs/tutorial/04-config-storage.md.
+# See tutorial/04-config-storage.md.
 apiVersion: v1
 kind: Pod
 metadata:

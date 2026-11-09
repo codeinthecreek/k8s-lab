@@ -1,5 +1,5 @@
 # Exposes the same backend on every node's IP, on a fixed high port.
-# See docs/tutorial/05-services-networking.md for why this isn't
+# See tutorial/05-services-networking.md for why this isn't
 # reachable at localhost:<nodePort> on the Docker host in kind.
 apiVersion: v1
 kind: Service

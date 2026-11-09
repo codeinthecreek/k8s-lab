@@ -1,6 +1,6 @@
 # Requests a cloud load balancer - kind has no cloud provider to grant
 # one, so EXTERNAL-IP stays <pending> indefinitely. See
-# docs/tutorial/05-services-networking.md.
+# tutorial/05-services-networking.md.
 apiVersion: v1
 kind: Service
 metadata:

@@ -1,7 +1,7 @@
 # Mounts config-storage-demo-nfs-pvc. Requires nfs-common on the node
 # it lands on - `make nfs-client-install PROFILE=default` first, or the
 # mount fails with "mount.nfs: ... No such file or directory". See
-# docs/tutorial/04-config-storage.md and
+# tutorial/04-config-storage.md and
 # lab-helpers/nfs-server/README.md.
 apiVersion: v1
 kind: Pod

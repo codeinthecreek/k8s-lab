@@ -1,6 +1,6 @@
 # Same priority and size as priority-preempt-pod.yaml, but its class sets
 # preemptionPolicy: Never - if it does not fit it stays Pending and never
-# evicts anything. See docs/tutorial/07-scheduling.md (PriorityClass and
+# evicts anything. See tutorial/07-scheduling.md (PriorityClass and
 # preemption).
 #
 # NOT directly appliable: __HIGH_CPU__ is a placeholder computed from the
