@@ -1,0 +1,6 @@
+# Namespace for chapter 17's GPU demo Pods. Deleting this namespace removes
+# every Pod the chapter creates.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gpu-real

@@ -1,0 +1,15 @@
+# Chapter 17 (CUDA sample): asks for one GPU and selects the nvidia RuntimeClass.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: cuda-vectoradd
+  namespace: gpu-real
+spec:
+  restartPolicy: Never
+  runtimeClassName: nvidia
+  containers:
+  - name: main
+    image: nvcr.io/nvidia/k8s/cuda-sample:vectoradd-cuda12.5.0
+    resources:
+      limits:
+        nvidia.com/gpu: 1

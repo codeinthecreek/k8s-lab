@@ -306,12 +306,52 @@ independent of any course material, aimed at anyone with `kind` and
 `kubectl` installed, not just this repo's maintainer. See
 `docs/tutorial/README.md` for the chapter list and scope.
 
-**The GPU section uses its own profiles.** Chapters from 15 on run on
+**The GPU section uses its own clusters.** Chapters 15 and 16 run on
 `kind/profiles/gpu-fake/` (1 control-plane + 2 workers, no ingress or
 metrics-server, same pinned node image and registry patch as the other
 profiles) instead of extending `default`, so GPU-specific state - here, a
 fake `nvidia.com/gpu` count written onto Node objects - never leaks into
-the earlier chapters' cluster.
+the earlier chapters' cluster. Chapter 17 runs on a separate nvkind
+cluster, `k8s-lab-gpu-real` (1 control-plane + 1 real-GPU worker); see
+`lab-helpers/gpu-real/`.
+
+**The real-GPU cluster is not a profile.** There is no
+`kind/profiles/gpu-real/`: nvkind renders its own kind config. The
+Makefile has `gpu-real` targets anyway - `make up|down PROFILE=gpu-real`,
+`make clean PROFILE=gpu-real` (exists only for `gpu-real`, and removes only
+`lab-helpers/gpu-real/.cache/`, where the nvkind build and the Helm state
+live) and `make gpu-real-env` (prints the `HELM_*` exports that keep Helm
+state in that cache). The host-wide Docker runtime change (default runtime,
+CDI, a Docker restart) is never run by the Makefile: it lives in one
+standalone script that uses `sudo`,
+`lab-helpers/gpu-real/nvidia-docker-runtime.sh enable|disable|status`, run
+by hand; `make up PROFILE=gpu-real` only checks its `status`. The Makefile
+pins the same `kindest/node` tag and digest as the profiles'
+`cluster.yaml` files (`GPU_REAL_NODE_IMAGE`); that is a second copy of the
+pin, so bump it in the same change as the profiles' digests.
+
+**The GPU section is capped at four chapters.** 15 requesting GPUs (fake
+counts), 16 placing GPU work (labels, taints), 17 GPUs on a real node
+(device plugin, first GPU Pod, troubleshooting), 18 sharing GPUs
+(time-slicing, per-namespace quota). The aim is the skills needed to manage
+GPUs in a real cluster; what does not transfer to one stays out.
+
+**Each GPU chapter has a scope ledger; additions default to cut.** The IN
+and OUT lists are fixed before drafting. Anything beyond IN is raised as an
+open decision stating why it transfers to a real cluster, why the skill is
+incomplete without it, and its cost in lines and setup. Without a yes it is
+cut.
+
+**Size budget, from chapter 17 on.** A GPU chapter is no longer than
+chapter 16 (lines and words), has at most 5 sections, and one exercise per
+concept.
+
+**Kind-specific setup stays out of chapter bodies.** Host runtime changes,
+CDI and cluster creation live under `lab-helpers/`, linked from the chapter
+in one line; the body shows only steps that transfer to a real cluster.
+
+**Out-of-scope GPU topics get one pointers paragraph, at the end of chapter
+18 only:** GPU Operator, MIG, DRA, Kueue and monitoring.
 
 **Chapter order follows concept dependency, not an exam's domain list or
 a course's lesson order.** A CKA domain breakdown or a course syllabus is

@@ -155,7 +155,7 @@ Available profiles:
 | `default`          | 1 control-plane + 2 workers      | kindnetd CNI |
 | `ha-control-plane`  | 3 control-plane + 2 workers      | kindnetd CNI; Envoy load-balances the 3 apiservers |
 | `calico`            | 1 control-plane + 2 workers      | Calico CNI (kindnetd disabled); alternative CNI demo - kindnetd on current node images also enforces NetworkPolicy, see DESIGN.md |
-| `gpu-fake`          | 1 control-plane + 2 workers      | kindnetd CNI; no ingress, no metrics-server, publishes no host ports; the GPU section's profile (tutorial ch. 15 on) - nodes advertise a fake `nvidia.com/gpu` by hand |
+| `gpu-fake`          | 1 control-plane + 2 workers      | kindnetd CNI; no ingress, no metrics-server, publishes no host ports; the GPU section's profile (tutorial ch. 15-16) - nodes advertise a fake `nvidia.com/gpu` by hand |
 
 Run `make list-profiles` to list them from the filesystem directly.
 
@@ -169,6 +169,7 @@ Run `make list-profiles` to list them from the filesystem directly.
 | `make list-profiles`          | List `kind/profiles/*` | n/a - no `PROFILE` |
 | `make kubeconfig PROFILE=x`   | `kind export kubeconfig` for that profile | Uses `default` |
 | `make status PROFILE=x`       | `kubectl get nodes -o wide` and `get pods -A` against that profile's context (errors clearly if it isn't up) | Auto-detects whichever profile's cluster is currently running |
+| `make up\|down\|clean PROFILE=gpu-real`, `make gpu-real-env` | `gpu-real` is not a profile directory: `up` creates a kind cluster with a real GPU worker using nvkind (it needs the host Docker runtime set up first), `down` deletes it, `clean` removes `lab-helpers/gpu-real/.cache/`, `gpu-real-env` prints the `HELM_*` exports for Helm state kept in that cache. See `lab-helpers/gpu-real/README.md` | n/a - always names `gpu-real` |
 
 For day-to-day `kubectl`, `kind`, and `helm` commands, see the
 [command cheat sheet](docs/cheatsheet.md).
@@ -179,7 +180,8 @@ For day-to-day `kubectl`, `kind`, and `helm` commands, see the
 written directly against this repo rather than alongside it: manifest-
 driven chapters use real YAML under `tutorial/examples/`, applied to one
 of this repo's profiles (`default`, `ha-control-plane`, `calico`, or
-`gpu-fake` for the GPU section);
+`gpu-fake` for chapters 15-16 of the GPU section; chapter 17 uses the separate
+cluster in `lab-helpers/gpu-real/`);
 command/concept-driven chapters (architecture, Helm, observability, HA)
 work directly against a live cluster via `kubectl`/`docker` instead.
 Every example, manifest or command, is verified against real cluster

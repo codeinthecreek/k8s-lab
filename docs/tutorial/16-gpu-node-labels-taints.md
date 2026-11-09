@@ -38,7 +38,7 @@ has.
 **In scope**: those three labels applied by hand, `nodeSelector` and node
 affinity on them, a taint on a GPU node, and tolerations on GPU Pods.
 **Not covered here**: the labels' automatic generation, device plugins
-(a later chapter in this section takes those up with real GPUs),
+([chapter 17](17-real-gpu-device-plugin.md) takes those up with a real GPU),
 ResourceQuota for GPUs, queueing systems, GPU sharing. Dynamic Resource
 Allocation is in chapter 14's section "Dynamic Resource Allocation
 (`resource.k8s.io`)"; nothing here depends on it.
