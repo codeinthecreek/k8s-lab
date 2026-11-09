@@ -26,8 +26,31 @@ REGISTRY_IMAGE      := registry:3
 REGISTRY_PORT        := 5001
 REGISTRY_DATA_DIR   := lab-helpers/registry/data
 
-.PHONY: up down reset list-profiles kubeconfig status nfs-up nfs-down nfs-status nfs-client-install registry-up registry-down registry-status registry-client-install
+# lab-helpers/gpu-real - PROFILE=gpu-real is a real GPU on a kind worker
+# (tutorial ch. 17). It is created with nvkind, not `kind create cluster
+# --config`, so it has no cluster.yaml: nvkind's default config (1
+# control-plane + 1 worker with all GPUs; no GPU label) is used as-is.
+# Host-side prerequisite, root-owned and never called from make:
+# lab-helpers/gpu-real/nvidia-docker-runtime.sh (`up` only checks its `status`).
+# nvkind has no tagged release (checked 2026-11-08): pinned by full commit.
+# GPU_REAL_NODE_IMAGE is the same pin as every kind/profiles/*/cluster.yaml;
+# bump all of them together (DESIGN.md "Node image pinning").
+# Absolute path of the directory holding this Makefile (not the CWD, which
+# `make -C` or a subdirectory run would change). Defined before any include.
+MAKEFILE_DIR        := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
+GPU_REAL_DIR        := $(MAKEFILE_DIR)/lab-helpers/gpu-real
+GPU_REAL_RUNTIME    := $(GPU_REAL_DIR)/nvidia-docker-runtime.sh
+GPU_REAL_CACHE      := $(GPU_REAL_DIR)/.cache
+GPU_REAL_NVKIND_SHA := c57050497cffee36f10c8b918d2727c4f26d886e
+GPU_REAL_NODE_IMAGE := kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5
+# Everything go and helm would put in ~/go, ~/.cache or ~/.config goes under
+# GPU_REAL_CACHE instead (gitignored). -modcacherw keeps the module cache
+# deletable by `make clean`.
+GPU_REAL_GOENV      := GOPATH=$(GPU_REAL_CACHE)/go GOBIN=$(GPU_REAL_CACHE)/bin GOMODCACHE=$(GPU_REAL_CACHE)/go/pkg/mod GOCACHE=$(GPU_REAL_CACHE)/gocache GOFLAGS=-modcacherw GOTOOLCHAIN=local
 
+.PHONY: up down reset list-profiles kubeconfig status nfs-up nfs-down nfs-status nfs-client-install registry-up registry-down registry-status registry-client-install clean gpu-real-env
+
+ifneq ($(PROFILE),gpu-real)
 up:
 	@if [ ! -f $(PROFILE_DIR)/cluster.yaml ]; then \
 		echo "no such profile: $(PROFILE_DIR)/cluster.yaml not found" >&2; \
@@ -42,6 +65,17 @@ up:
 		echo "kubectl apply -f $$manifest"; \
 		kubectl --context $(CONTEXT) apply -f "$$manifest" || exit 1; \
 	done < $(PROFILE_DIR)/manifests.txt
+else
+up:
+	@if ! $(GPU_REAL_RUNTIME) status >/dev/null; then \
+		echo "Docker is not set up for GPU kind nodes - run $(GPU_REAL_RUNTIME) enable first" >&2; \
+		exit 1; \
+	fi
+	env $(GPU_REAL_GOENV) go install github.com/NVIDIA/nvkind/cmd/nvkind@$(GPU_REAL_NVKIND_SHA)
+	$(GPU_REAL_CACHE)/bin/nvkind cluster create --name $(CLUSTER_NAME) --image $(GPU_REAL_NODE_IMAGE) --wait 5m
+	@echo "--- up. To run helm against this cluster without touching ~/.config/helm or ~/.cache/helm:"
+	@echo '    eval "$$(make -s gpu-real-env)"'
+endif
 
 down:
 	kind delete cluster --name $(CLUSTER_NAME)
@@ -217,3 +251,36 @@ registry-client-install:
 		printf '[host."http://%s:5000"]\n' "$(REGISTRY_CONTAINER)" | docker exec -i "$$node" cp /dev/stdin "$$registry_dir/hosts.toml"; \
 	done; \
 	printf 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: local-registry-hosting\n  namespace: kube-public\ndata:\n  localRegistryHosting.v1: |\n    host: "localhost:%s"\n    help: "https://kind.sigs.k8s.io/docs/user/local-registry/"\n' "$(REGISTRY_PORT)" | kubectl --context $(CONTEXT) apply -f -
+
+# --- lab-helpers/gpu-real (real GPU on a kind worker, tutorial ch. 17) ---
+
+# Prints export lines; use as: eval "$(make -s gpu-real-env)". Read-only.
+gpu-real-env:
+	@echo 'export HELM_CONFIG_HOME=$(GPU_REAL_CACHE)/helm/config'
+	@echo 'export HELM_CACHE_HOME=$(GPU_REAL_CACHE)/helm/cache'
+	@echo 'export HELM_DATA_HOME=$(GPU_REAL_CACHE)/helm/data'
+	@echo 'export HELM_REPOSITORY_CONFIG=$(GPU_REAL_CACHE)/helm/repositories.yaml'
+	@echo 'export HELM_REPOSITORY_CACHE=$(GPU_REAL_CACHE)/helm/repository'
+
+# Only PROFILE=gpu-real has anything to clean, and it removes only
+# lab-helpers/gpu-real/.cache. No image is removed: the pinned kindest/node
+# image is shared with the other profiles. The nvidia/ images used inside the
+# cluster live in the nodes' containerd and go away with `make down`.
+ifeq ($(PROFILE),gpu-real)
+clean:
+	@if kind get clusters 2>/dev/null | grep -qx $(CLUSTER_NAME); then \
+		echo "cluster $(CLUSTER_NAME) exists - run 'make down PROFILE=gpu-real' first" >&2; \
+		exit 1; \
+	fi
+	@root="$$(realpath -- '$(MAKEFILE_DIR)')" && cache="$$(realpath -m -- '$(GPU_REAL_CACHE)')" || exit 1; \
+	if [ -z "$$root" ] || [ "$$root" = / ] || [ ! -f "$$root/Makefile" ] || [ ! -f "$$root/DESIGN.md" ] \
+	   || [ "$$cache" != "$$root/lab-helpers/gpu-real/.cache" ]; then \
+		echo "refusing to remove '$$cache': not <repo>/lab-helpers/gpu-real/.cache inside '$$root'" >&2; \
+		exit 1; \
+	fi; \
+	echo "removing $$cache"; \
+	rm -rf -- "$$cache"
+else
+clean:
+	@echo "nothing to clean for PROFILE=$(PROFILE) (only PROFILE=gpu-real has a clean step)"
+endif
