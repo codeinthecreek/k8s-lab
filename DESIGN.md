@@ -311,7 +311,7 @@ independent of any course material, aimed at anyone with `kind` and
 metrics-server, same pinned node image and registry patch as the other
 profiles) instead of extending `default`, so GPU-specific state - here, a
 fake `nvidia.com/gpu` count written onto Node objects - never leaks into
-the earlier chapters' cluster. Chapter 17 runs on a separate nvkind
+the earlier chapters' cluster. Chapters 17 and 18 run on a separate nvkind
 cluster, `k8s-lab-gpu-real` (1 control-plane + 1 real-GPU worker); see
 `lab-helpers/gpu-real/`.
 
@@ -351,7 +351,7 @@ CDI and cluster creation live under `lab-helpers/`, linked from the chapter
 in one line; the body shows only steps that transfer to a real cluster.
 
 **Out-of-scope GPU topics get one pointers paragraph, at the end of chapter
-18 only:** GPU Operator, MIG, DRA, Kueue and monitoring.
+18 only:** GPU Operator, MIG, DRA, MPS, Kueue and monitoring.
 
 **Chapter order follows concept dependency, not an exam's domain list or
 a course's lesson order.** A CKA domain breakdown or a course syllabus is

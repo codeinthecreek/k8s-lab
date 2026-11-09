@@ -1,0 +1,6 @@
+# Namespace for chapter 18's GPU quota examples. Deleting this namespace
+# removes the quotas and every Pod and Deployment created in it.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: gpu-quota

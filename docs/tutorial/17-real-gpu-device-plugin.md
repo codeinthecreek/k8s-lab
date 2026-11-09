@@ -19,7 +19,8 @@ Pod that requests one GPU, and reading the symptoms of missing capacity
 and of a Pending GPU Pod. **Not covered here**: the NVIDIA GPU Operator,
 installing NFD or GFD, MIG, Dynamic Resource Allocation (chapter 14),
 monitoring, how a device plugin works inside, and sharing GPUs
-(time-slicing, per-namespace quota), which is chapter 18.
+(time-slicing, per-namespace quota), which is
+[chapter 18](18-gpu-sharing-and-quota.md).
 
 Chapter 8 is the reference for Helm, chapter 15 for `nvidia.com/gpu` as a
 count and for `Insufficient nvidia.com/gpu`, and chapter 16 for GPU node
@@ -369,4 +370,4 @@ the [lab README](../../lab-helpers/gpu-real/README.md) describes.
 make down PROFILE=gpu-real
 ```
 
-Next, chapter 18 covers sharing GPUs (time-slicing, per-namespace quota).
+Next, [chapter 18](18-gpu-sharing-and-quota.md) covers sharing GPUs (time-slicing, per-namespace quota).

@@ -4,6 +4,84 @@ Running log of problems hit while building/operating this lab and what
 fixed them. Newest entries at the top. Not a changelog of features -
 `git log` covers that. This is for things that cost time figuring out.
 
+## 2026-11-09 - The device plugin chart installs an `mps-control-daemon` DaemonSet even when MPS is not configured
+
+On chart `nvdp/nvidia-device-plugin` 0.20.1, `helm install` creates a
+second DaemonSet, `nvdp-nvidia-device-plugin-mps-control-daemon`, with
+node selector `nvidia.com/mps.capable=true`. No node has that label, so it
+shows `DESIRED 0` and has no Pod. It is not a failure; it is easy to
+mistake for one when reading `kubectl get ds -n nvidia-device-plugin` while
+debugging a missing-capacity problem (chapter 17's check list).
+
+## 2026-11-09 - `kubectl wait` for `CrashLoopBackOff` timed out twice on the two-container plugin Pod
+
+With a config map the plugin Pod has two containers (see the entry on the
+init container and sidecar). Twice, a
+`kubectl wait --for=jsonpath='{.status.containerStatuses[?(@.name=="nvidia-device-plugin-ctr")].state.waiting.reason}'=CrashLoopBackOff`
+on a Pod whose plugin container was failing (a Helm upgrade that dropped
+`runtimeClassName`, then one with an invalid `replicas` value) timed out
+(240s and 180s). Each time `kubectl get pods` listed the Pod as `1/2`,
+`Error`, 5 restarts. Chapter 17's form of this wait worked on its
+single-container Pod. No cause was established; `kubectl get pods` and the
+logs showed the failure when the wait did not.
+
+## 2026-11-09 - Events outlive a deleted Pod, so a Pod recreated under the same name shows the old Pod's events
+
+Deleting `gpu-share-two` and applying a Pod with the same name later
+listed the first Pod's `Scheduled`, `Pulled`, `Created`, `Started` and
+`Killing` events in front of the new Pod's own, when filtering with
+`--field-selector involvedObject.name=<name>`. Chapter 18 uses a new name
+(`gpu-share-two-strict`) for the repeat request so the event list for the
+second Pod is only that Pod's.
+
+## 2026-11-09 - A `failRequestsGreaterThanOne` violation fails on the kubelet side, after scheduling, and a bare Pod is not retried
+
+With `failRequestsGreaterThanOne: true`, a Pod requesting `nvidia.com/gpu: 2`
+against `replicas: 4` is scheduled (its `NODE` column is set), then rejected
+at admission on the node: phase `Failed`, reason `UnexpectedAdmissionError`,
+message `... maximum request size for shared resources is 1; found 2 ...`.
+It is not `Pending` and has no `FailedScheduling` event, so the usual
+"read the scheduler's event" step finds nothing. The plugin's README says
+such a Pod must be deleted, updated and redeployed
+([v0.20.1, lines 405-408](https://github.com/NVIDIA/k8s-device-plugin/blob/v0.20.1/README.md#L405-L408)).
+The node's `Allocated resources` showed `nvidia.com/gpu 0 0` afterwards.
+
+## 2026-11-09 - Giving the plugin a config map adds an init container and a sidecar, and the sidecar gets `SYS_ADMIN`
+
+On chart 0.20.1, setting `config.map` changes the plugin Pod from `1/1`
+to `2/2`: an init container (`nvidia-device-plugin-init`) and a sidecar
+(`nvidia-device-plugin-sidecar`) appear next to `nvidia-device-plugin-ctr`,
+and the sidecar's `securityContext.capabilities.add` is `["SYS_ADMIN"]`.
+Anyone reviewing the chart's footprint on a shared cluster, or running
+admission policies that restrict capabilities, will see this only after
+turning on a config map, not in a plain install.
+
+## 2026-11-09 - `helm upgrade` in Helm 4.3.0 does not carry over `--set` values from the previous release, so the plugin lost `runtimeClassName`
+
+With Helm 4.3.0, a default `helm upgrade` does not carry over values from
+the previous release: a value set with `--set` at install (here
+`runtimeClassName`) is lost unless passed again on every upgrade. Observed:
+`helm upgrade nvdp ... -f values.yaml` (no `--set`) after an install with
+`--set runtimeClassName=nvidia` left `helm get values` holding only the
+file's values and the DaemonSet's `.spec.template.spec.runtimeClassName`
+empty; the plugin then logged `Failed to initialize NVML:
+ERROR_LIBRARY_NOT_FOUND` and the node showed capacity 4, allocatable 0.
+`--reuse-values` was not tested. This repo's chapters repeat
+`--set runtimeClassName=nvidia` on every `helm` command.
+
+## 2026-11-09 - A ResourceQuota on `limits.nvidia.com/gpu` or on `nvidia.com/gpu` is accepted and never counts anything
+
+The Kubernetes docs say that for extended resources only quota items with
+the `requests.` prefix are allowed
+([Quota for extended resources](https://kubernetes.io/docs/concepts/policy/resource-quotas/#quota-for-extended-resources)).
+On Kubernetes v1.36.1 the API server still creates a quota with
+`limits.nvidia.com/gpu: "2"` and another with `nvidia.com/gpu: "2"`
+without complaint. With both in place, three Pods that each limit
+`nvidia.com/gpu: 1` all ran, and `kubectl describe resourcequota` showed
+`Used 0` against `Hard 2` for both quotas. Only `requests.nvidia.com/gpu`
+enforced (a third Pod got `403 Forbidden: exceeded quota`). A quota that
+does not enforce looks identical to one that has simply not been reached.
+
 ## 2026-11-07 - A hand-patched extended-resource count is still present after a kubelet restart (sampled for 30s) but is lost with Node deletion
 
 On kind v0.33.0 / `kindest/node:v1.36.1`, a count written with

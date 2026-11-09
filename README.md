@@ -180,7 +180,7 @@ For day-to-day `kubectl`, `kind`, and `helm` commands, see the
 written directly against this repo rather than alongside it: manifest-
 driven chapters use real YAML under `tutorial/examples/`, applied to one
 of this repo's profiles (`default`, `ha-control-plane`, `calico`, or
-`gpu-fake` for chapters 15-16 of the GPU section; chapter 17 uses the separate
+`gpu-fake` for chapters 15-16 of the GPU section; chapters 17-18 use the separate
 cluster in `lab-helpers/gpu-real/`);
 command/concept-driven chapters (architecture, Helm, observability, HA)
 work directly against a live cluster via `kubectl`/`docker` instead.

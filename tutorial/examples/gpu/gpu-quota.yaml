@@ -1,0 +1,9 @@
+# Chapter 18 (quota): at most 2 GPU units requested in the namespace.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: gpu-quota
+  namespace: gpu-quota
+spec:
+  hard:
+    requests.nvidia.com/gpu: "2"

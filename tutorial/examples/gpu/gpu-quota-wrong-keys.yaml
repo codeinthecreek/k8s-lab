@@ -1,0 +1,19 @@
+# Chapter 18 (quota keys): the same limit written as limits.<resource> and as
+# the bare resource name.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: gpu-quota-limits-key
+  namespace: gpu-quota
+spec:
+  hard:
+    limits.nvidia.com/gpu: "2"
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: gpu-quota-bare-key
+  namespace: gpu-quota
+spec:
+  hard:
+    nvidia.com/gpu: "2"
