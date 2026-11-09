@@ -39,7 +39,7 @@ has.
 affinity on them, a taint on a GPU node, and tolerations on GPU Pods.
 **Not covered here**: the labels' automatic generation, device plugins
 ([chapter 17](17-real-gpu-device-plugin.md) takes those up with a real GPU),
-ResourceQuota for GPUs, queueing systems, GPU sharing. Dynamic Resource
+ResourceQuota for GPUs and GPU sharing ([chapter 18](18-gpu-sharing-and-quota.md)), queueing systems. Dynamic Resource
 Allocation is in chapter 14's section "Dynamic Resource Allocation
 (`resource.k8s.io`)"; nothing here depends on it.
 

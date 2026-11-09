@@ -27,7 +27,7 @@ REGISTRY_PORT        := 5001
 REGISTRY_DATA_DIR   := lab-helpers/registry/data
 
 # lab-helpers/gpu-real - PROFILE=gpu-real is a real GPU on a kind worker
-# (tutorial ch. 17). It is created with nvkind, not `kind create cluster
+# (tutorial ch. 17-18). It is created with nvkind, not `kind create cluster
 # --config`, so it has no cluster.yaml: nvkind's default config (1
 # control-plane + 1 worker with all GPUs; no GPU label) is used as-is.
 # Host-side prerequisite, root-owned and never called from make:
@@ -252,7 +252,7 @@ registry-client-install:
 	done; \
 	printf 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: local-registry-hosting\n  namespace: kube-public\ndata:\n  localRegistryHosting.v1: |\n    host: "localhost:%s"\n    help: "https://kind.sigs.k8s.io/docs/user/local-registry/"\n' "$(REGISTRY_PORT)" | kubectl --context $(CONTEXT) apply -f -
 
-# --- lab-helpers/gpu-real (real GPU on a kind worker, tutorial ch. 17) ---
+# --- lab-helpers/gpu-real (real GPU on a kind worker, tutorial ch. 17-18) ---
 
 # Prints export lines; use as: eval "$(make -s gpu-real-env)". Read-only.
 gpu-real-env:
