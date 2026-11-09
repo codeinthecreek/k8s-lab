@@ -1,0 +1,16 @@
+# Chapter 18 (quota): a third sleeper, one more GPU unit than the quota allows.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-quota-c
+  namespace: gpu-quota
+spec:
+  restartPolicy: Never
+  runtimeClassName: nvidia
+  containers:
+  - name: main
+    image: nvcr.io/nvidia/k8s/cuda-sample:vectoradd-cuda12.5.0
+    command: ["sleep", "3600"]
+    resources:
+      limits:
+        nvidia.com/gpu: 1

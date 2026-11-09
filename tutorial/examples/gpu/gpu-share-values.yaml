@@ -1,0 +1,12 @@
+# Chapter 18 (time-slicing): Helm values for the NVIDIA device plugin chart.
+# config.map.default is the plugin's config file: each physical GPU is
+# advertised as 4 nvidia.com/gpu.
+config:
+  map:
+    default: |-
+      version: v1
+      sharing:
+        timeSlicing:
+          resources:
+          - name: nvidia.com/gpu
+            replicas: 4

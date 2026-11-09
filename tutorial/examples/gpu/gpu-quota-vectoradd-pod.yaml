@@ -1,0 +1,15 @@
+# Chapter 18 (quota): runs the CUDA sample once and exits.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-quota-vectoradd
+  namespace: gpu-quota
+spec:
+  restartPolicy: Never
+  runtimeClassName: nvidia
+  containers:
+  - name: main
+    image: nvcr.io/nvidia/k8s/cuda-sample:vectoradd-cuda12.5.0
+    resources:
+      limits:
+        nvidia.com/gpu: 1

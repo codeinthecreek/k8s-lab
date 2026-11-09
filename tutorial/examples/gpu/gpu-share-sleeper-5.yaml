@@ -1,0 +1,16 @@
+# Chapter 18 (sharing): the fifth sleeper; the node has only four units.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gpu-share-5
+  namespace: gpu-real
+spec:
+  restartPolicy: Never
+  runtimeClassName: nvidia
+  containers:
+  - name: main
+    image: nvcr.io/nvidia/k8s/cuda-sample:vectoradd-cuda12.5.0
+    command: ["sleep", "3600"]
+    resources:
+      limits:
+        nvidia.com/gpu: 1

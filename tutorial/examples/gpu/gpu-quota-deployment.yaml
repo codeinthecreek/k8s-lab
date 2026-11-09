@@ -1,0 +1,24 @@
+# Chapter 18 (quota): three replicas of one GPU unit each, against a quota of two.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gpu-quota-deploy
+  namespace: gpu-quota
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: gpu-quota-deploy
+  template:
+    metadata:
+      labels:
+        app: gpu-quota-deploy
+    spec:
+      runtimeClassName: nvidia
+      containers:
+      - name: main
+        image: nvcr.io/nvidia/k8s/cuda-sample:vectoradd-cuda12.5.0
+        command: ["sleep", "3600"]
+        resources:
+          limits:
+            nvidia.com/gpu: 1
