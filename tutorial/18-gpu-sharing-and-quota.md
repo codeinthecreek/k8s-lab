@@ -10,7 +10,7 @@ those units a namespace may request, so one team cannot take them all.
 The sections start from a fresh `k8s-lab-gpu-real` cluster with the device
 plugin installed as in chapter 17's first section; the short start-state
 snippet is in
-[`lab-helpers/gpu-real/README.md`](../../lab-helpers/gpu-real/README.md),
+[`lab-helpers/gpu-real/README.md`](../lab-helpers/gpu-real/README.md),
 next to the one host-wide Docker change the cluster needs. After that
 they use only `kubectl` and `helm`.
 
@@ -53,7 +53,7 @@ same name (the plugin can also rename them with `renameByDefault`, which
 is not used here). The format is in the plugin's
 [README](https://github.com/NVIDIA/k8s-device-plugin/blob/v0.20.1/README.md#with-cuda-time-slicing) (tag v0.20.1). The chart builds
 that file from its `config.map` value. In
-[`gpu-share-values.yaml`](../../tutorial/examples/gpu/gpu-share-values.yaml)
+[`gpu-share-values.yaml`](examples/gpu/gpu-share-values.yaml)
 the two keys that matter are `sharing.timeSlicing.resources[].name`
 (`nvidia.com/gpu`) and `replicas: 4`. Four is this chapter's choice, small
 enough to fill in the next section.

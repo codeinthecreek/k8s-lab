@@ -2,7 +2,7 @@
 # local-path-provisioner's ReadWriteMany rejection, since the default
 # StorageClass uses volumeBindingMode: WaitForFirstConsumer (nothing is
 # attempted until a Pod references the PVC). See
-# docs/tutorial/04-config-storage.md.
+# tutorial/04-config-storage.md.
 apiVersion: v1
 kind: Pod
 metadata:

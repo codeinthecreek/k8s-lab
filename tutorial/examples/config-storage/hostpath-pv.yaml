@@ -4,7 +4,7 @@
 # node, since a hostPath directory only exists on the one node it names,
 # not anywhere a Pod might be scheduled. storageClassName: "" (explicit
 # empty string, not omitted) is what makes this static rather than
-# dynamic - see docs/tutorial/04-config-storage.md.
+# dynamic - see tutorial/04-config-storage.md.
 apiVersion: v1
 kind: PersistentVolume
 metadata:

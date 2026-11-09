@@ -176,7 +176,7 @@ For day-to-day `kubectl`, `kind`, and `helm` commands, see the
 
 ## Tutorial
 
-`docs/tutorial/` is a from-scratch, concept-first Kubernetes tutorial
+`tutorial/` is a from-scratch, concept-first Kubernetes tutorial
 written directly against this repo rather than alongside it: manifest-
 driven chapters use real YAML under `tutorial/examples/`, applied to one
 of this repo's profiles (`default`, `ha-control-plane`, `calico`, or
@@ -199,7 +199,7 @@ concept section follows the same shape: why the feature exists, a
 runnable example, then real expected output, including at least one
 instructive failure mode where there is one.
 
-See [docs/tutorial/README.md](docs/tutorial/README.md) for the full
+See [tutorial/README.md](tutorial/README.md) for the full
 chapter list, per-chapter scope, and verification status, and [DESIGN.md](DESIGN.md)'s
 "Tutorial content: structure and conventions" section for the reasoning
 behind how it's structured.
@@ -213,7 +213,7 @@ never referenced from a profile's `manifests.txt` and never touched by
 
 `lab-helpers/nfs-server/` is a real NFS server (container, on the `kind`
 Docker network), used by the tutorial's storage chapter
-([docs/tutorial/04-config-storage.md](docs/tutorial/04-config-storage.md))
+([tutorial/04-config-storage.md](tutorial/04-config-storage.md))
 for its PersistentVolume/PersistentVolumeClaim examples. See
 [lab-helpers/nfs-server/README.md](lab-helpers/nfs-server/README.md) for
 usage and a load-bearing gotcha (the export's `fsid=0` means clients mount
@@ -233,7 +233,7 @@ ephemeral and don't retain packages installed into them after creation.
 `lab-helpers/registry/` is a real image registry (`registry:3` container,
 also on the `kind` Docker network), used by the tutorial's developer-
 journey chapter
-([docs/tutorial/13-app-deployment.md](docs/tutorial/13-app-deployment.md))
+([tutorial/13-app-deployment.md](tutorial/13-app-deployment.md))
 to build/tag/push a self-built image the cluster can actually pull. See
 [lab-helpers/registry/README.md](lab-helpers/registry/README.md) - unlike
 `nfs-server`, using it requires a `cluster.yaml` change (a
@@ -276,7 +276,7 @@ DESIGN.md                      architecture decisions and rationale
 docs/findings.md                running log of issues hit and fixes
 docs/cheatsheet.md              kubectl / kind / helm / make command cheat sheet
 docs/testing.md                 manual verification commands
-docs/tutorial/                  from-scratch Kubernetes tutorial (see docs/tutorial/README.md)
+tutorial/                       from-scratch Kubernetes tutorial (see tutorial/README.md)
 tutorial/examples/<topic>/       manifests referenced by the tutorial's manifest-driven chapters
 kind/profiles/<name>/
   cluster.yaml                  kind cluster config for this profile

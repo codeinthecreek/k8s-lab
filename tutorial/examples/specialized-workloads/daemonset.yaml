@@ -1,5 +1,5 @@
 # One Pod per node rather than a replica count - see
-# docs/tutorial/06-specialized-workloads.md's "DaemonSet" subsection.
+# tutorial/06-specialized-workloads.md's "DaemonSet" subsection.
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:

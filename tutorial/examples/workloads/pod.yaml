@@ -1,4 +1,4 @@
-# A bare Pod - no controller behind it. See docs/tutorial/03-workloads.md
+# A bare Pod - no controller behind it. See tutorial/03-workloads.md
 # for why this is almost never what you actually want to create directly.
 apiVersion: v1
 kind: Pod

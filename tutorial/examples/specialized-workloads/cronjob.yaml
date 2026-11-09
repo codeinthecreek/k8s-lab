@@ -1,5 +1,5 @@
 # Schedules Job objects on a cron schedule - see
-# docs/tutorial/06-specialized-workloads.md's "workloads that run to
+# tutorial/06-specialized-workloads.md's "workloads that run to
 # completion" subsection. History limits kept low deliberately so
 # rotation is observable within a few runs rather than the defaults
 # (3/1).

@@ -1,5 +1,5 @@
 # Backend workload the Service examples in this directory all target.
-# See docs/tutorial/05-services-networking.md.
+# See tutorial/05-services-networking.md.
 apiVersion: apps/v1
 kind: Deployment
 metadata:

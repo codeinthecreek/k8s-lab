@@ -1,4 +1,4 @@
-# See docs/tutorial/04-config-storage.md - `motd` is deliberately
+# See tutorial/04-config-storage.md - `motd` is deliberately
 # multi-line to demonstrate the env-var-vs-volume-mount consumption
 # difference.
 apiVersion: v1

@@ -269,7 +269,7 @@ Now the same PV/PVC binding against real shared storage: this repo's
 `lab-helpers/nfs-server/` runs a real NFS server on the `kind` Docker
 network specifically for this (`make nfs-up`, `make nfs-client-install
 PROFILE=default` first - see
-[lab-helpers/nfs-server/README.md](../../lab-helpers/nfs-server/README.md)
+[lab-helpers/nfs-server/README.md](../lab-helpers/nfs-server/README.md)
 for the `fsid=0` mount-path gotcha this PV's `nfs.path: /` already
 accounts for).
 `tutorial/examples/config-storage/nfs-pv.yaml` and
@@ -354,7 +354,7 @@ omitted field, not something you have to take on faith.
 lets a PVC request storage from a *provisioner* instead, which creates a
 matching PV on demand. kind ships a default StorageClass, `standard`,
 backed by `rancher.io/local-path` (see this repo's
-[DESIGN.md](../../DESIGN.md), "Storage" section) - a real dynamic
+[DESIGN.md](../DESIGN.md), "Storage" section) - a real dynamic
 provisioner, but a deliberately minimal one: each volume is a directory
 on whichever single node's filesystem the consuming Pod happens to land
 on, with no replication. That constraint isn't just a performance

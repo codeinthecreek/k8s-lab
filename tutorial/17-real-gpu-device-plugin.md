@@ -10,7 +10,7 @@ is what to look at when GPU capacity is missing or a GPU Pod stays
 
 The lab setup - a kind worker with a real GPU, the one host-wide Docker
 change it needs, the session order and how to undo it - is in
-[`lab-helpers/gpu-real/README.md`](../../lab-helpers/gpu-real/README.md).
+[`lab-helpers/gpu-real/README.md`](../lab-helpers/gpu-real/README.md).
 The sections below start from that cluster (`k8s-lab-gpu-real`: one
 control-plane node and one GPU worker) and use only `kubectl` and `helm`.
 
@@ -364,7 +364,7 @@ capacity free.
 
 Teardown: the plugin is already uninstalled, and deleting the cluster
 removes the Pods and the node label with it. Then undo the host change as
-the [lab README](../../lab-helpers/gpu-real/README.md) describes.
+the [lab README](../lab-helpers/gpu-real/README.md) describes.
 
 ```
 make down PROFILE=gpu-real

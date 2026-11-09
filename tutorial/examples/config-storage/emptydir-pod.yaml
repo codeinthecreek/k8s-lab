@@ -1,6 +1,6 @@
 # A Pod-scoped scratch volume - lives exactly as long as the Pod does,
 # not any individual container. Deliberately writes nothing on start -
-# see docs/tutorial/04-config-storage.md, which writes into it via
+# see tutorial/04-config-storage.md, which writes into it via
 # `kubectl exec` instead, so a fresh Pod's empty volume is genuinely
 # observable rather than immediately overwritten by the start command.
 apiVersion: v1

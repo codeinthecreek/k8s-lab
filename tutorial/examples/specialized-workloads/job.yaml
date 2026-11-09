@@ -1,5 +1,5 @@
 # A workload that runs to completion rather than staying up - see
-# docs/tutorial/06-specialized-workloads.md's "workloads that run to
+# tutorial/06-specialized-workloads.md's "workloads that run to
 # completion" subsection.
 apiVersion: batch/v1
 kind: Job

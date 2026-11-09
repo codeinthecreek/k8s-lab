@@ -1,5 +1,5 @@
 # Three PriorityClasses for the "PriorityClass and preemption" subsection
-# of docs/tutorial/07-scheduling.md. PriorityClass is cluster-scoped (no
+# of tutorial/07-scheduling.md. PriorityClass is cluster-scoped (no
 # namespace). `value` is the priority integer a Pod gets when it names the
 # class; higher wins. The two "high" classes share one value and differ only
 # in preemptionPolicy, so the demo isolates that single field.

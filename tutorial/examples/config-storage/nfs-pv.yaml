@@ -3,7 +3,7 @@
 # that export means the mount path is "/", not "/nfsshare" - see
 # lab-helpers/nfs-server/README.md. storageClassName: "" (explicit empty
 # string, not omitted) is what makes this static rather than dynamic -
-# see docs/tutorial/04-config-storage.md.
+# see tutorial/04-config-storage.md.
 apiVersion: v1
 kind: PersistentVolume
 metadata:

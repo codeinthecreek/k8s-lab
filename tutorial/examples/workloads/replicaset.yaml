@@ -1,4 +1,4 @@
-# See docs/tutorial/03-workloads.md - a ReplicaSet's identity is its
+# See tutorial/03-workloads.md - a ReplicaSet's identity is its
 # spec.selector, not any ownership metadata on the Pods it manages.
 apiVersion: apps/v1
 kind: ReplicaSet

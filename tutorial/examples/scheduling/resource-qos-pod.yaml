@@ -1,5 +1,5 @@
 # requests == limits on every container gives QoS class Guaranteed. See
-# docs/tutorial/07-scheduling.md.
+# tutorial/07-scheduling.md.
 apiVersion: v1
 kind: Pod
 metadata:

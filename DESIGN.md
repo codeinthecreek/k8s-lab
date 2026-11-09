@@ -111,7 +111,7 @@ enforces NetworkPolicy via an embedded, nftables-based
 profile: a NetworkPolicy that should block cross-Pod traffic genuinely
 blocked it, and kindnet's own pod logs show `"Starting controller"
 name="kube-network-policies"` and `"Policy engine is ready."` (see
-`docs/tutorial/09-security.md` and `docs/findings.md`'s 2026-08-28 entry
+`tutorial/09-security.md` and `docs/findings.md`'s 2026-08-28 entry
 for how this was found). This was not always true, and most current
 material - including Kubernetes' own docs pages - still states kindnetd
 doesn't enforce NetworkPolicy, because they haven't caught up to it
@@ -260,7 +260,7 @@ setting `[plugins."io.containerd.grpc.v1.cri".registry] config_path =
 "/etc/containerd/certs.d"`. This is what lets `lab-helpers/registry` (a
 `registry:3` container, same pattern as `lab-helpers/nfs-server` - see the
 top-level README's "Lab helpers" section) act as a real image registry for
-the tutorial's developer-journey chapter (`docs/tutorial/13-*.md`):
+the tutorial's developer-journey chapter (`tutorial/13-*.md`):
 containerd on each node reads `/etc/containerd/certs.d/localhost:5001/hosts.toml`
 (written by `make registry-client-install`) to redirect
 `localhost:5001/<image>` pulls to the registry container over the `kind`
@@ -301,10 +301,10 @@ onto different node images.
 
 ## Tutorial content: structure and conventions
 
-`docs/tutorial/` holds a from-scratch, concept-first Kubernetes tutorial -
+`tutorial/` holds a from-scratch, concept-first Kubernetes tutorial -
 independent of any course material, aimed at anyone with `kind` and
 `kubectl` installed, not just this repo's maintainer. See
-`docs/tutorial/README.md` for the chapter list and scope.
+`tutorial/README.md` for the chapter list and scope.
 
 **The GPU section uses its own clusters.** Chapters 15 and 16 run on
 `kind/profiles/gpu-fake/` (1 control-plane + 2 workers, no ingress or

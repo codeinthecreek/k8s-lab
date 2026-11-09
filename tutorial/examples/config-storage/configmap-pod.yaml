@@ -1,6 +1,6 @@
 # Consumes config-storage-demo-cm both ways at once - envFrom and a
 # mounted volume - so the two can be compared directly. See
-# docs/tutorial/04-config-storage.md.
+# tutorial/04-config-storage.md.
 apiVersion: v1
 kind: Pod
 metadata:

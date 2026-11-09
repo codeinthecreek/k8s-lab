@@ -25,7 +25,7 @@ inline per-chapter rather than assumed to hold indefinitely - see
 DESIGN.md.
 
 For a quick reference to the `kubectl`, `kind`, `helm`, and `make`
-commands used throughout, see the [command cheat sheet](../cheatsheet.md).
+commands used throughout, see the [command cheat sheet](../docs/cheatsheet.md).
 
 ## Chapters
 
