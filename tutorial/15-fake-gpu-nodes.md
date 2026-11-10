@@ -33,7 +33,7 @@ subresource, scheduling against it, the rules for requesting it, and
 showing that nothing is attached to the container. **Not covered here**:
 GPU node labels and taints (chapter 16), and, in later chapters of this
 section, device plugins (taken up in [chapter 17](17-real-gpu-device-plugin.md)),
-ResourceQuota for GPUs and GPU sharing ([chapter 18](18-gpu-sharing-and-quota.md)), queueing systems, and real GPUs.
+ResourceQuota for GPUs and GPU sharing ([chapter 18](18-gpu-sharing-and-quota.md)), and real GPUs.
 
 Verified against: kind v0.33.0, `kindest/node:v1.36.1` (the `gpu-fake`
 profile), kubectl client v1.37.1.
