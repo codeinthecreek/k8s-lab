@@ -17,6 +17,7 @@ Everyday commands only. For this repo, cluster name is `k8s-lab-<PROFILE>` and t
 - [Nodes and scheduling](#nodes-and-scheduling)
 - [RBAC](#rbac)
 - [Helm](#helm)
+- [GPU](#gpu)
 - [Output formatting and filtering](#output-formatting-and-filtering)
 - [Handy patterns](#handy-patterns)
 
@@ -28,12 +29,16 @@ Everyday commands only. For this repo, cluster name is `k8s-lab-<PROFILE>` and t
 
 | Target                       | Action | If `PROFILE` is omitted |
 |-------------------------------|--------|--------------------------|
-| `make up PROFILE=x`           | `kind create cluster` with the profile's `cluster.yaml`, then `kubectl apply -f` each path in `manifests.txt`, in order | Uses `default` |
+| `make up PROFILE=x`           | `kind create cluster` with the profile's `cluster.yaml`, then `kubectl apply -f` each path in `manifests.txt`, in order (`gpu-real` has no profile directory: nvkind creates the cluster and nothing is applied) | Uses `default` |
 | `make down PROFILE=x`         | `kind delete cluster` for that profile | Uses `default` |
 | `make reset PROFILE=x`        | `down` then `up` | Uses `default` |
 | `make list-profiles`          | List `kind/profiles/*` | n/a |
 | `make kubeconfig PROFILE=x`   | `kind export kubeconfig` for that profile | Uses `default` |
 | `make status PROFILE=x`       | `kubectl get nodes -o wide` and `get pods -A` against that profile's context | Auto-detects the running profile (errors if none, or if several are up) |
+| `make clean PROFILE=x`        | `gpu-real`: remove `lab-helpers/gpu-real/.cache/` (refuses while the cluster exists). Any other profile: prints "nothing to clean" | Uses `default` |
+| `make gpu-real-env`           | Print the `HELM_*` exports that keep Helm state in `lab-helpers/gpu-real/.cache/`; use as `eval "$(make -s gpu-real-env)"` | n/a |
+
+`make up PROFILE=gpu-real` needs the host Docker runtime set up first: `lab-helpers/gpu-real/nvidia-docker-runtime.sh status` is read-only and exits 1 unless it is enabled; `enable` and `disable` use sudo and are run by hand. `make down PROFILE=gpu-real` does not check it.
 
 ```bash
 make up                          # default profile
@@ -356,10 +361,68 @@ helm package ./mychart
 
 Notes:
 
-- `--set` overrides are lost on the next `helm upgrade` unless you pass them again, use `-f`, or add `--reuse-values`. A values file kept in git is the reliable way.
+- Values from an earlier `--set` or `-f` on `helm upgrade` (checked on Helm 4.3.0, one chart): they are kept if the upgrade passes no `-f` or `--set`, or adds `--reuse-values` (or `--reset-then-reuse-values`). Otherwise the upgrade replaces them with only what that command passes: `-f` alone drops an earlier `--set`, while `-f` plus a repeated `--set` keeps it. `--reset-values` clears them. Check with `helm get values NAME`.
 - Prefer `helm upgrade --install` in scripts so the same command works on first run and re-runs.
 - `helm template ... | kubectl apply -f -` and `helm get manifest` are useful for seeing exactly what a chart creates.
 - This repo applies plain manifests instead of Helm charts (see DESIGN.md), so Helm here is for trying out third-party charts on a lab cluster.
+
+---
+
+## GPU
+
+Verified against (2026-11-10): kind v0.33.0, `kindest/node:v1.36.1`, kubectl client v1.37.1, helm v4.3.0; the `gpu-fake` profile, and a `gpu-real` cluster built with [nvkind](https://github.com/NVIDIA/nvkind) (commit `c57050497cff`) with chart `nvdp/nvidia-device-plugin` 0.20.1 (device plugin v0.20.1), `nvidia-container-toolkit` 1.20.2, NVIDIA driver 615.78.08 and one NVIDIA GeForce GTX 1650. The `-L` label view, the taint view and `taint`, the stored-resources `get pod`, `patch node` and the two kube-apiserver commands ran on `gpu-fake` only; the rest ran on `gpu-real`.
+
+`nvidia.com/gpu` is an extended resource: a whole-number count on the Node, set under `limits`. Tutorial chapters [15](../tutorial/15-fake-gpu-nodes.md) to [18](../tutorial/18-gpu-sharing-and-quota.md) explain each step.
+
+```bash
+# What the nodes advertise, have left, and are labelled and tainted with
+kubectl get nodes -o custom-columns='NAME:.metadata.name,CAPACITY:.status.capacity.nvidia\.com/gpu,ALLOCATABLE:.status.allocatable.nvidia\.com/gpu'
+kubectl describe node NAME | sed -n '/^Allocated resources:/,/^Events:/{/^Events:/!p}'
+kubectl get nodes -L nvidia.com/gpu.product,nvidia.com/gpu.count,nvidia.com/gpu.memory
+kubectl get nodes -o custom-columns='NAME:.metadata.name,TAINT:.spec.taints[*].key,EFFECT:.spec.taints[*].effect'
+kubectl wait --for=jsonpath='{.status.allocatable.nvidia\.com/gpu}'=1 node/NAME --timeout=60s
+
+# Why a GPU Pod is Pending or failed
+kubectl get events -n NS --field-selector involvedObject.name=POD,reason=FailedScheduling -o custom-columns='REASON:.reason,MESSAGE:.message'
+kubectl get pod POD -n NS -o jsonpath='{.status.reason}{"\n"}{.status.message}{"\n"}'
+kubectl get pod POD -n NS -o jsonpath='{.spec.containers[0].resources}{"\n"}'   # request is filled in from the limit
+kubectl exec POD -n NS -- nvidia-smi   # worked in a Pod with runtimeClassName: nvidia
+
+# Device plugin (Helm)
+helm repo add nvdp https://nvidia.github.io/k8s-device-plugin
+helm install nvdp nvdp/nvidia-device-plugin --version 0.20.1 --namespace nvidia-device-plugin --create-namespace --set runtimeClassName=nvidia   # needs RuntimeClass nvidia, or the DaemonSet's Pods are rejected
+kubectl get ds -n nvidia-device-plugin   # DESIRED 0: no node matches the DaemonSet's node affinity
+kubectl logs -n nvidia-device-plugin -l app.kubernetes.io/name=nvidia-device-plugin --tail=-1
+kubectl get runtimeclass nvidia
+
+# A test Pod and a quota
+kubectl apply -f tutorial/examples/gpu/gpu-real-cuda-vectoradd-pod.yaml
+kubectl wait --for=jsonpath='{.status.phase}'=Succeeded pod/POD -n NS --timeout=240s
+kubectl logs POD -n NS
+kubectl apply -f tutorial/examples/gpu/gpu-quota.yaml   # requests.nvidia.com/gpu: "2"
+kubectl create quota NAME --hard=requests.nvidia.com/gpu=2 -n NS
+kubectl describe resourcequota -n NS
+
+# Lab only: set by hand, or checks on the API server
+kubectl label node NAME nvidia.com/gpu.present=true
+kubectl taint node NAME nvidia.com/gpu:NoSchedule
+kubectl patch node NAME --subresource=status --type=json -p '[{"op":"add","path":"/status/capacity/nvidia.com~1gpu","value":"1"}]'   # lab only: writes a fake count
+docker exec NAME-control-plane cat /etc/kubernetes/manifests/kube-apiserver.yaml | grep admission-plugins   # additions only
+kubectl exec -n kube-system kube-apiserver-NAME-control-plane -- kube-apiserver --help 2>&1 | grep -A1 '^[[:space:]]*--enable-admission-plugins' | grep -o 'in addition to default enabled ones ([^)]*)'   # the default-enabled set
+```
+
+| Message or status | Meaning |
+|---|---|
+| `Insufficient nvidia.com/gpu` | No node has that many free (scheduler event) |
+| `UnexpectedAdmissionError` | The device plugin refused the request after scheduling (time-slicing with `failRequestsGreaterThanOne: true` and a request above 1) |
+| `exceeded quota: ... requests.nvidia.com/gpu` | The namespace's GPU quota is used up (`Error from server (Forbidden)` when the Pod is created) |
+| `Failed to initialize NVML: ERROR_LIBRARY_NOT_FOUND` | The device plugin Pod is not running under the `nvidia` runtime |
+
+Notes:
+
+- A limit alone is enough (the request is filled in from it); a request alone is rejected.
+- `kubectl patch node` without `--subresource=status` prints `patched (no change)` and changes nothing.
+- Only `requests.nvidia.com/gpu` quota keys count; `limits.nvidia.com/gpu` and bare `nvidia.com/gpu` keys are accepted and never count.
 
 ---
 

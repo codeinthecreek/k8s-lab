@@ -58,11 +58,13 @@ the two keys that matter are `sharing.timeSlicing.resources[].name`
 (`nvidia.com/gpu`) and `replicas: 4`. Four is this chapter's choice, small
 enough to fill in the next section.
 
-`runtimeClassName` is not in the values file. With Helm 4.3.0 a default
-`helm upgrade` does not carry over values from the previous release (observed:
-after an upgrade without it, the DaemonSet's `runtimeClassName` was empty;
-`--reuse-values` was not tested), so every `helm` command in this chapter
-repeats `--set runtimeClassName=nvidia`.
+`runtimeClassName` is not in the values file. With Helm 4.3.0 and chart
+0.20.1, an upgrade that passes `-f` and no `--set` does not keep the value
+from the previous release (observed: the DaemonSet's `runtimeClassName`
+was empty), while `-f` plus a repeated `--set runtimeClassName=nvidia`
+kept it; an upgrade with no `-f` or `--set`, or with `--reuse-values` or
+`--reset-then-reuse-values`, also kept it. So every `helm` command in this
+chapter repeats `--set runtimeClassName=nvidia`.
 
 **Example**:
 

@@ -69,6 +69,20 @@ ERROR_LIBRARY_NOT_FOUND` and the node showed capacity 4, allocatable 0.
 `--reuse-values` was not tested. This repo's chapters repeat
 `--set runtimeClassName=nvidia` on every `helm` command.
 
+**Update 2026-11-10:** the entry above reads more broadly than what was
+observed. Re-checked on Helm 4.3.0 with chart `nvdp/nvidia-device-plugin`
+0.20.1: install with `--set runtimeClassName=nvidia`, one upgrade, then
+`helm get values` and the DaemonSet's `.spec.template.spec.runtimeClassName`.
+`-f values.yaml` alone dropped it (reproduced on `gpu-fake`).
+`-f values.yaml --set runtimeClassName=nvidia`, the shape chapter 18 uses,
+kept it (on `gpu-real`). An upgrade with no `-f` or `--set`, and one with
+`--reuse-values` or `--reset-then-reuse-values`, also kept it, so
+`--reuse-values` is now tested. A `--set` of a different key alone,
+`--set runtimeClassName=null` and `--reset-values` dropped it. So earlier
+values are replaced by what that command passes when `-f` or `--set` is
+given without a reuse flag, not on every upgrade; repeating the value with
+`--set` kept it (a value carried in the `-f` file instead was not tested).
+
 ## 2026-11-09 - A ResourceQuota on `limits.nvidia.com/gpu` or on `nvidia.com/gpu` is accepted and never counts anything
 
 The Kubernetes docs say that for extended resources only quota items with
