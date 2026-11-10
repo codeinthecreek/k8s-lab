@@ -217,28 +217,53 @@ default weight, it was actively outvoting `NodeResourcesFit`'s
 bin-packing signal.
 
 **Example**: dump the scheduler's own effective configuration (writing
-it out on an unrelated, disposable process, not the live one) to see the
-weights side by side, confirmed live against this exact cluster's
-kube-scheduler v1.36.1 image:
+it out from a separate, disposable container rather than the live
+scheduler) to see the weights side by side. Run it from the repo root,
+with the same kube-scheduler version (v1.36.1) this cluster's control
+plane runs. The config file's `clientConnection.kubeconfig` points at
+`/etc/kubernetes/scheduler.conf`, and that path has to hold a valid
+kubeconfig: with no file there the command stops with `stat
+/etc/kubernetes/scheduler.conf: no such file or directory`, and with an
+empty file it stops with `invalid configuration: no configuration has
+been provided, try setting KUBERNETES_MASTER environment variable`. The
+dump completes with a kubeconfig that has no credentials and only a
+placeholder server address, so the first three lines build exactly that with
+`kubectl config` in a temporary file (nothing secret is written) and the
+container mounts it at that path; the last line deletes it again:
 
 ```
+kubectl config --kubeconfig=/tmp/k8s-lab-scheduler.conf set-cluster dump --server=https://127.0.0.1:1
+kubectl config --kubeconfig=/tmp/k8s-lab-scheduler.conf set-context dump --cluster=dump
+kubectl config --kubeconfig=/tmp/k8s-lab-scheduler.conf use-context dump
 docker run --rm \
-  -v tutorial/examples/scheduling-profiles/scheduler-config-naive.yaml:/config.yaml:ro \
-  -v <a-valid-kubeconfig>:/etc/kubernetes/scheduler.conf:ro \
-  registry.k8s.io/kube-scheduler:v1.36.1 kube-scheduler --config=/config.yaml --write-config-to=/dev/stdout
+  -v "$PWD/tutorial/examples/scheduling-profiles/scheduler-config-naive.yaml:/config.yaml:ro" \
+  -v /tmp/k8s-lab-scheduler.conf:/etc/kubernetes/scheduler.conf:ro \
+  registry.k8s.io/kube-scheduler:v1.36.1 kube-scheduler --config=/config.yaml --write-config-to=/dev/stdout \
+  2>&1 | grep -A1 -E '^      - name: (NodeResourcesFit|PodTopologySpread|DynamicResources)$' | grep -v '^--$' | head -6
+rm /tmp/k8s-lab-scheduler.conf
 ```
 
-**Expected output** (relevant excerpt from the `multiPoint.enabled`
-list, three plugins with their compiled-in default weights - the third,
-`DynamicResources`, is the one the DRA section below comes back to):
+The dump is long (both profiles, 20 plugins each in `multiPoint.enabled`),
+so the `grep` keeps only the three plugins this section is about, taken
+from the first profile; if nothing prints, run the `docker run` part
+without the filter to see the error.
+
+**Expected output** (three confirmations from `kubectl config`, then the
+three plugins' compiled-in default weights - the third, `DynamicResources`,
+is the one the DRA section below comes back to; `bin-packing-scheduler`,
+the second profile in the dump, prints the same three weights, because the
+config only changes `NodeResourcesFit`'s `pluginConfig`):
 
 ```
-    - name: NodeResourcesFit
-      weight: 1
-    - name: PodTopologySpread
-      weight: 2
-    - name: DynamicResources
-      weight: 2
+Cluster "dump" set.
+Context "dump" created.
+Switched to context "dump".
+      - name: NodeResourcesFit
+        weight: 1
+      - name: PodTopologySpread
+        weight: 2
+      - name: DynamicResources
+        weight: 2
 ```
 
 `PodTopologySpread` outweighs `NodeResourcesFit` two to one by default -
