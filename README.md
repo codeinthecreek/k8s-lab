@@ -46,13 +46,18 @@ Docker daemon
     default:           1 control-plane container,  2 worker containers
     ha-control-plane:   3 control-plane containers (Envoy LB in front
                           of them, see DESIGN.md), 2 worker containers
+    calico:            1 control-plane container,  2 worker containers
+    gpu-fake:          1 control-plane container,  2 worker containers
+    (PROFILE=gpu-real has no kind/profiles/ directory - nvkind creates its
+     cluster: 1 control-plane container, 1 GPU worker container - see
+     "Lab helpers" below)
 ==========================================================================
                     layered on top, explicit manifests
                     (kubectl apply -f, per profile's manifests.txt)
 
-  CNI            kindnetd (default)  or  Calico (staged, not yet wired
-                 pod-to-pod routing across      into a profile - see
-                 node containers                DESIGN.md)
+  CNI            kindnetd (default)  or  Calico (the calico profile,
+                 pod-to-pod routing across      where kindnetd is disabled
+                 node containers                - see DESIGN.md)
 
   Ingress        ingress-nginx (hostPort variant)
                  bound to the node labeled ingress-ready=true
@@ -97,9 +102,16 @@ See [DESIGN.md](DESIGN.md) for the reasoning behind each of these pieces.
 - [Docker](https://docs.docker.com/get-docker/) (or Podman configured as
   kind's provider) - kind runs cluster nodes as containers.
 - [kind](https://kind.sigs.k8s.io/docs/user/quick-start/#installation) -
-  built and tested against kind v0.32.0.
+  the pinned node image's digest comes from the kind v0.32.0 release notes
+  (see [DESIGN.md](DESIGN.md#node-image-pinning)); the GPU chapters 15-18
+  record verification against kind v0.33.0 in their "Verified against" lines.
 - `kubectl`.
 - `make`.
+- `helm` - used by chapter 8 and by chapters 17-18.
+- For `PROFILE=gpu-real` only: Go (the Makefile builds nvkind with
+  `go install`) and an NVIDIA driver plus nvidia-container-toolkit already
+  installed on the host - see
+  [lab-helpers/gpu-real/README.md](lab-helpers/gpu-real/README.md).
 
 ## Quickstart
 
@@ -169,6 +181,7 @@ Run `make list-profiles` to list them from the filesystem directly.
 | `make list-profiles`          | List `kind/profiles/*` | n/a - no `PROFILE` |
 | `make kubeconfig PROFILE=x`   | `kind export kubeconfig` for that profile | Uses `default` |
 | `make status PROFILE=x`       | `kubectl get nodes -o wide` and `get pods -A` against that profile's context (errors clearly if it isn't up) | Auto-detects whichever profile's cluster is currently running |
+| `make clean PROFILE=x`        | For `gpu-real`: removes `lab-helpers/gpu-real/.cache/` (refuses while the cluster exists). For any other profile: prints "nothing to clean" and does nothing | Uses `default` (prints the "nothing to clean" message) |
 | `make up\|down\|clean PROFILE=gpu-real`, `make gpu-real-env` | `gpu-real` is not a profile directory: `up` creates a kind cluster with a real GPU worker using nvkind (it needs the host Docker runtime set up first), `down` deletes it, `clean` removes `lab-helpers/gpu-real/.cache/`, `gpu-real-env` prints the `HELM_*` exports for Helm state kept in that cache. See `lab-helpers/gpu-real/README.md` | n/a - always names `gpu-real` |
 
 For day-to-day `kubectl`, `kind`, and `helm` commands, see the
@@ -176,8 +189,8 @@ For day-to-day `kubectl`, `kind`, and `helm` commands, see the
 
 ## Tutorial
 
-`tutorial/` is a from-scratch, concept-first Kubernetes tutorial
-written directly against this repo rather than alongside it: manifest-
+`tutorial/` is a from-scratch, concept-first Kubernetes tutorial of 18
+chapters, written directly against this repo rather than alongside it: manifest-
 driven chapters use real YAML under `tutorial/examples/`, applied to one
 of this repo's profiles (`default`, `ha-control-plane`, `calico`, or
 `gpu-fake` for chapters 15-16 of the GPU section; chapters 17-18 use the separate
@@ -191,10 +204,15 @@ Chapters run in concept-dependency order - architecture and the API
 model first, then workloads, configuration/storage, networking,
 specialized workloads, scheduling, Helm, security, observability, CRDs,
 and multi-control-plane HA as the operator-perspective capstone.
-Chapter 13 closes the tutorial from the other direction - the
+Chapter 13 comes at it from the other direction - the
 developer-perspective seam the other
 chapters assume is already done: source code, a Dockerfile, and a local
-registry (`lab-helpers/registry`) on the way to a Deployment. Each
+registry (`lab-helpers/registry`) on the way to a Deployment. Chapter 14
+holds topics that don't fit that ordering (scheduler configuration,
+Dynamic Resource Allocation, Headlamp, krew). Chapters 15-18 are the GPU
+section: fake GPU counts and GPU node labels and taints on `gpu-fake`
+(15-16), then a real GPU, the NVIDIA device plugin, time-slicing and a GPU
+quota on `lab-helpers/gpu-real/` (17-18). Each
 concept section follows the same shape: why the feature exists, a
 runnable example, then real expected output, including at least one
 instructive failure mode where there is one.
@@ -208,8 +226,9 @@ behind how it's structured.
 
 `lab-helpers/` holds infrastructure that supports working through this
 repo's own material but isn't itself part of the reproducible lab - it's
-never referenced from a profile's `manifests.txt` and never touched by
-`make up`/`down`/`reset`.
+never referenced from a profile's `manifests.txt`. `nfs-server` and
+`registry` are also never touched by `make up`/`down`/`reset`; `gpu-real`
+is the exception (last helper below).
 
 `lab-helpers/nfs-server/` is a real NFS server (container, on the `kind`
 Docker network), used by the tutorial's storage chapter
@@ -251,6 +270,20 @@ works on clusters created after that change.
 `registry-client-install` must be re-run any time the target profile's
 nodes are recreated, same reason as `nfs-client-install`.
 
+`lab-helpers/gpu-real/` is the setup for tutorial chapters 17 and 18
+([tutorial/17-real-gpu-device-plugin.md](tutorial/17-real-gpu-device-plugin.md),
+[tutorial/18-gpu-sharing-and-quota.md](tutorial/18-gpu-sharing-and-quota.md)):
+a kind cluster (`k8s-lab-gpu-real`) with one real NVIDIA GPU worker.
+`gpu-real` is a valid `PROFILE` value (`make up|down|clean PROFILE=gpu-real`,
+see the Makefile targets table), but there is no `kind/profiles/gpu-real/`
+directory, because nvkind creates the cluster instead of `kind create
+cluster --config`; `make list-profiles` therefore does not list it. The
+host-wide Docker runtime change it needs is made by
+`lab-helpers/gpu-real/nvidia-docker-runtime.sh enable|disable|status`, run
+by hand with sudo; `make up PROFILE=gpu-real` only checks its `status`. See
+[lab-helpers/gpu-real/README.md](lab-helpers/gpu-real/README.md) for the
+full sequence.
+
 ## Adding a new profile
 
 No code changes needed - the Makefile and manifests are profile-agnostic.
@@ -266,7 +299,7 @@ No code changes needed - the Makefile and manifests are profile-agnostic.
 4. `make up PROFILE=<new-name>`.
 
 See [DESIGN.md](DESIGN.md)'s "kindnetd stays the default CNI" section for a concrete
-worked example (adding a `calico` profile using the already-staged
+worked example (how the existing `calico` profile was made, using
 `manifests/cni/calico.yaml`).
 
 ## Repo layout
@@ -276,16 +309,18 @@ DESIGN.md                      architecture decisions and rationale
 docs/findings.md                running log of issues hit and fixes
 docs/cheatsheet.md              kubectl / kind / helm / make command cheat sheet
 docs/testing.md                 manual verification commands
-tutorial/                       from-scratch Kubernetes tutorial (see tutorial/README.md)
+tutorial/                       from-scratch Kubernetes tutorial, 18 chapters (see tutorial/README.md)
 tutorial/examples/<topic>/       manifests referenced by the tutorial's manifest-driven chapters
 kind/profiles/<name>/
   cluster.yaml                  kind cluster config for this profile
   manifests.txt                 ordered list of manifest paths to apply
 manifests/
-  cni/calico.yaml                staged, not applied by any profile yet
-  ingress/ingress-nginx.yaml      kind hostPort variant, applied by both profiles
-  metrics/metrics-server.yaml     applied by both profiles
+  cni/calico.yaml                applied by the calico profile
+  ingress/ingress-nginx.yaml      kind hostPort variant, applied by default, ha-control-plane and calico
+  metrics/metrics-server.yaml     applied by default, ha-control-plane and calico
 lab-helpers/
   nfs-server/                    NFS server for a PV/PVC lab exercise (not part of make up)
+  registry/                      local image registry for chapter 13 (not part of make up)
+  gpu-real/                      real-GPU kind cluster for chapters 17-18 (make up PROFILE=gpu-real)
 Makefile
 ```

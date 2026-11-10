@@ -38,25 +38,29 @@ Makefile full of `sed`). That was deliberately rejected:
   convenience," silently drifting from the pinned, tested digest). Plain
   files make every value a conscious, visible edit.
 
-The cost is duplication - both profiles repeat the same node image digest,
-the same `networking.disableDefaultCNI: false`. That's accepted on purpose:
-duplication here is legible, and there are only two profiles today. If a
-third or fourth profile makes the duplication genuinely painful, revisit
-this - but don't preemptively solve a problem two files don't have.
+The cost is duplication - the profiles repeat the same node image digest
+and, apart from `calico`, the same `networking.disableDefaultCNI: false`.
+That was accepted on purpose when there were only two profiles:
+duplication here is legible, and the guidance was that if a third or
+fourth profile made it genuinely painful, this should be revisited rather
+than solved preemptively. `calico` and `gpu-fake` have since brought the
+count to four; whether that point has been reached is an open design
+question.
 
-One caveat to "independent, run whichever you want": today's two profiles
-are *not* independent at runtime, because both publish the same fixed host
-ports for ingress - see "Ingress: hostPort + node pinning" below for why,
-and `docs/findings.md` for what hitting that looks like in practice.
+One caveat to "independent, run whichever you want": three of today's four
+profiles (`default`, `ha-control-plane` and `calico`) are *not* independent
+at runtime, because they publish the same fixed host ports for ingress - see
+"Ingress: hostPort + node pinning" below for why, and `docs/findings.md` for
+what hitting that looks like in practice.
 
 ## Why every add-on is an explicit applied manifest, not a toggle
 
 kind (and other local Kubernetes tools) increasingly offer "just turn on
 ingress" style flags/addons. This repo avoids that everywhere except the
 default CNI: every non-core-control-plane component - ingress controller,
-metrics-server, and (staged, unused) Calico - is a real manifest file under
-`manifests/`, referenced by explicit path from a profile's
-`manifests.txt`, applied with a plain `kubectl apply -f`. There is no
+metrics-server, and Calico (applied only by the `calico` profile) - is a
+real manifest file under `manifests/`, referenced by explicit path from a
+profile's `manifests.txt`, applied with a plain `kubectl apply -f`. There is no
 addon system, no "enable: true" flag, no version resolved at apply-time.
 
 The reasons:
@@ -80,8 +84,8 @@ CoreDNS, kube-proxy, and the `local-path-provisioner` + default
 `StorageClass` as part of cluster creation, before the Makefile ever reads
 a profile's `manifests.txt`. Those are kind's own bundled behavior, not
 something this repo controls without disabling and replacing them
-outright (which is exactly what the staged-but-unused
-`manifests/cni/calico.yaml` is for, on the CNI side - see below). Every
+outright (which is exactly what `manifests/cni/calico.yaml` and the
+`calico` profile do, on the CNI side - see below). Every
 profile's `make up` also passes `--wait 5m` to `kind create cluster`, so
 it blocks until node(s) report `Ready` (which requires the CNI to actually
 be up) before the Makefile starts applying `manifests.txt` - without that,
@@ -195,17 +199,20 @@ added back onto the controller pod spec. As fetched, upstream's kind
 releases) - without it, the controller Deployment (`replicas: 1`, no anti-
 affinity) can be scheduled by Kubernetes onto any node with
 `kubernetes.io/os: linux`, including a worker whose Docker container has no
-host port mapping, silently breaking `curl localhost:80`. Both profiles'
-`cluster.yaml` label exactly one node `ingress-ready=true` and give that
-node's container `extraPortMappings` for 80/443, so the pod has exactly one
-place it can land that actually works.
+host port mapping, silently breaking `curl localhost:80`. The `default`,
+`ha-control-plane` and `calico` profiles' `cluster.yaml` files label
+exactly one node `ingress-ready=true` and give that node's container
+`extraPortMappings` for 80/443, so the pod has exactly one place it can
+land that actually works.
 
 - `default`: the label and port mapping are on the single control-plane
   node - there's only one "special" node in that topology anyway.
 - `ha-control-plane`: the label and port mapping are on the first worker
   node instead, keeping the ingress controller off the apiserver nodes.
+- `calico`: same as `default` - the label and port mapping are on the single
+  control-plane node.
 
-The tradeoff accepted here: both profiles publish host ports 80/443
+The tradeoff accepted here: those three profiles publish host ports 80/443
 directly on the Docker host, so **at most one ingress-enabled profile can
 run at a time** - bringing up a second one fails with a real Docker "port
 is already allocated" error, verified against an actual cluster (see
@@ -237,7 +244,7 @@ be carried into a real cluster's metrics-server config.
 
 ## Storage: kind's default local-path-provisioner, nothing more
 
-Neither profile installs a StorageClass. kind ships a `standard`
+No profile installs a StorageClass. kind ships a `standard`
 StorageClass backed by `rancher.io/local-path` (the local-path-provisioner
 that runs as part of kind itself) and marks it default automatically -
 that's left as-is. It is **hostPath-backed on a single node**: a PVC's
@@ -289,15 +296,18 @@ upstream.
 
 ## Node image pinning
 
-Both profiles pin `kindest/node` by tag **and** sha256 digest
+All four profiles pin `kindest/node` by tag **and** sha256 digest
 (`kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5`),
 taken from the kind v0.32.0 release notes
 (https://github.com/kubernetes-sigs/kind/releases/tag/v0.32.0). kind's own
 docs are explicit that the tag alone is not reproducible - the same tag
 can point at different image content across kind versions/builds - so the
-digest is the actual pin. When bumping this, update the digest in both
-profiles' `cluster.yaml` in the same commit so they never silently diverge
-onto different node images.
+digest is the actual pin. When bumping this, update every site in the same
+commit so they never silently diverge onto different node images: the
+`cluster.yaml` of all four profiles (`default`, `ha-control-plane`,
+`calico`, `gpu-fake`), `GPU_REAL_NODE_IMAGE` in the Makefile, and the digest
+quoted in this section (`git grep -n 3489c767` lists them for the current
+pin).
 
 ## Tutorial content: structure and conventions
 
@@ -315,13 +325,13 @@ the earlier chapters' cluster. Chapters 17 and 18 run on a separate nvkind
 cluster, `k8s-lab-gpu-real` (1 control-plane + 1 real-GPU worker); see
 `lab-helpers/gpu-real/`.
 
-**The real-GPU cluster is not a profile.** There is no
-`kind/profiles/gpu-real/`: nvkind renders its own kind config. The
-Makefile has `gpu-real` targets anyway - `make up|down PROFILE=gpu-real`,
-`make clean PROFILE=gpu-real` (exists only for `gpu-real`, and removes only
-`lab-helpers/gpu-real/.cache/`, where the nvkind build and the Helm state
-live) and `make gpu-real-env` (prints the `HELM_*` exports that keep Helm
-state in that cache). The host-wide Docker runtime change (default runtime,
+**The real-GPU cluster has no profile directory.** `PROFILE=gpu-real` is a
+valid `make` value, but there is no `kind/profiles/gpu-real/`: nvkind renders
+its own kind config. The Makefile handles it with `gpu-real` targets -
+`make up|down PROFILE=gpu-real`, `make clean PROFILE=gpu-real` (exists only
+for `gpu-real`, and removes only `lab-helpers/gpu-real/.cache/`, where the
+nvkind build and the Helm state live) and `make gpu-real-env` (prints the
+`HELM_*` exports that keep Helm state in that cache). The host-wide Docker runtime change (default runtime,
 CDI, a Docker restart) is never run by the Makefile: it lives in one
 standalone script that uses `sudo`,
 `lab-helpers/gpu-real/nvidia-docker-runtime.sh enable|disable|status`, run

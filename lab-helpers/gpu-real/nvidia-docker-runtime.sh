@@ -5,7 +5,7 @@
 # to give a kind worker node a real GPU, and switch it back. This is the only
 # script in the repo that uses sudo or writes under /etc; the Makefile never
 # calls it (`make up PROFILE=gpu-real` only checks `status`). It is
-# kind-specific host setup for tutorial chapter 17, not something a real
+# kind-specific host setup for tutorial chapters 17-18, not something a real
 # cluster node needs.
 #
 # While enabled, these effects are host-wide, not limited to kind:

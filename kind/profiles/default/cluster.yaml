@@ -20,7 +20,7 @@ networking:
 
 # Lets containerd on every node read per-registry host config from
 # /etc/containerd/certs.d/<registry>/hosts.toml. Needed for
-# lab-helpers/registry (tutorial ch. 12) - kind's own local-registry docs
+# lab-helpers/registry (tutorial ch. 13) - kind's own local-registry docs
 # say this patch is unnecessary on node images built from kind v0.27.0+,
 # but this profile's pinned kindest/node:v1.36.1 image does NOT set
 # config_path by default (checked its /etc/containerd/config.toml directly
