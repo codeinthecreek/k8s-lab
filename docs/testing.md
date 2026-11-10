@@ -1,9 +1,11 @@
 # Testing
 
-Manual commands for bringing up each profile, smoke-testing ingress and
-metrics against it, and tearing it down. This is what was actually run to
-verify both profiles against real clusters - see `docs/findings.md` for
-problems hit while doing this the first time.
+Manual commands for bringing up the `default` and `ha-control-plane`
+profiles, smoke-testing ingress and metrics against them, and tearing them
+down. This is what was actually run to verify those two profiles against
+real clusters - see `docs/findings.md` for problems hit while doing this the
+first time. The `calico` and `gpu-fake` profiles and `PROFILE=gpu-real` have
+no section here.
 
 All `kubectl` commands below use `--context` explicitly so it doesn't
 matter which cluster is currently your default context.
