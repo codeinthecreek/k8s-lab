@@ -43,7 +43,7 @@ networking:
 
 # Same as default profile - see kind/profiles/default/cluster.yaml and
 # DESIGN.md's "Local registry: containerd config_path patch" for why this
-# is here (lab-helpers/registry, tutorial ch. 12).
+# is here (lab-helpers/registry, tutorial ch. 13).
 containerdConfigPatches:
   - |-
     [plugins."io.containerd.grpc.v1.cri".registry]
