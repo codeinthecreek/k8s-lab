@@ -361,7 +361,7 @@ helm package ./mychart
 
 Notes:
 
-- `--set` overrides are lost on the next `helm upgrade` unless you pass them again, use `-f`, or add `--reuse-values`. A values file kept in git is the reliable way.
+- Values from an earlier `--set` or `-f` on `helm upgrade` (checked on Helm 4.3.0, one chart): they are kept if the upgrade passes no `-f` or `--set`, or adds `--reuse-values` (or `--reset-then-reuse-values`). Otherwise the upgrade replaces them with only what that command passes: `-f` alone drops an earlier `--set`, while `-f` plus a repeated `--set` keeps it. `--reset-values` clears them. Check with `helm get values NAME`.
 - Prefer `helm upgrade --install` in scripts so the same command works on first run and re-runs.
 - `helm template ... | kubectl apply -f -` and `helm get manifest` are useful for seeing exactly what a chart creates.
 - This repo applies plain manifests instead of Helm charts (see DESIGN.md), so Helm here is for trying out third-party charts on a lab cluster.
