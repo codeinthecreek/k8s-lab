@@ -45,15 +45,17 @@ internal event Fri Aug 28 06:27:07 UTC 2026
 internal event Fri Aug 28 06:27:12 UTC 2026
 ```
 
-On the node, the captured log file is empty too, so it isn't something
+`kubectl run` names the container after the Pod, so the container in
+these paths is `observability-demo-silent-pod` too. On the node, the
+captured log file is empty, so it isn't something
 `kubectl` missed: the runtime never received anything:
 
 ```
-$ docker exec <node-container> readlink /var/log/containers/observability-demo-silent-pod_default_app-<id>.log
-/var/log/pods/default_observability-demo-silent-pod_<uid>/app/0.log
+$ docker exec <node-container> readlink /var/log/containers/observability-demo-silent-pod_default_observability-demo-silent-pod-<id>.log
+/var/log/pods/default_observability-demo-silent-pod_<uid>/observability-demo-silent-pod/0.log
 
-$ docker exec <node-container> wc -l /var/log/pods/default_observability-demo-silent-pod_<uid>/app/0.log
-0 /var/log/pods/default_observability-demo-silent-pod_<uid>/app/0.log
+$ docker exec <node-container> wc -l /var/log/pods/default_observability-demo-silent-pod_<uid>/observability-demo-silent-pod/0.log
+0 /var/log/pods/default_observability-demo-silent-pod_<uid>/observability-demo-silent-pod/0.log
 ```
 
 ### `kubectl debug` and ephemeral containers
@@ -72,12 +74,18 @@ the Pod's `spec.ephemeralContainers`, separately from
 process namespace, so your tools can see and inspect its processes,
 without changing or restarting the Pod.
 
-**Example**: the `registry.k8s.io/pause` image has no shell at all:
+**Example**: the `registry.k8s.io/pause` image has no shell at all.
+`kubectl run` names the Pod's container after the Pod, so that's the
+name `--target` needs. `-c debugger` names the debugging container. The
+debugging command finishes in a moment, so instead of attaching to it,
+read its output afterwards with `kubectl logs -c debugger`. (For an
+interactive shell, use `kubectl debug -it ... -- sh` instead.)
 
 ```
 kubectl run observability-demo-shellless-pod --image=registry.k8s.io/pause:3.10 --restart=Never
 kubectl exec observability-demo-shellless-pod -- sh -c "echo hi"
-kubectl debug -it observability-demo-shellless-pod --image=busybox:1.36 --target=app -- sh -c "ps aux; cat /proc/1/comm"
+kubectl debug observability-demo-shellless-pod --image=busybox:1.36 --target=observability-demo-shellless-pod -c debugger -- sh -c "ps aux; cat /proc/1/comm"
+kubectl logs observability-demo-shellless-pod -c debugger
 kubectl get pod observability-demo-shellless-pod -o jsonpath='{.spec.ephemeralContainers[*].name}'
 kubectl get pod observability-demo-shellless-pod -o jsonpath='{.spec.containers[*].name}'
 ```
@@ -92,13 +100,12 @@ error: ... OCI runtime exec failed: exec failed: unable to start container proce
 ```
 
 ```
-Targeting container "app". If you don't see processes from this container it may be because the container runtime doesn't support this feature.
-Defaulting debug container name to debugger-d77f6.
+Targeting container "observability-demo-shellless-pod". If you don't see processes from this container it may be because the container runtime doesn't support this feature.
 
 PID   USER     TIME  COMMAND
     1 65535     0:00 /pause
-   20 root      0:00 sh -c ps aux; cat /proc/1/comm
-   33 root      0:00 ps aux
+   14 root      0:00 sh -c ps aux; cat /proc/1/comm
+   27 root      0:00 ps aux
 pause
 ```
 
@@ -107,8 +114,8 @@ separate container because `--target` shared the process namespace. And
 the two lists really are separate:
 
 ```
-debugger-d77f6      # .spec.ephemeralContainers[*].name
-app                 # .spec.containers[*].name
+debugger                            # .spec.ephemeralContainers[*].name
+observability-demo-shellless-pod    # .spec.containers[*].name
 ```
 
 ### `crictl`: the node's CRI-level view, independent of the API server
@@ -235,16 +242,19 @@ available and `kubectl top` worked.
   something is gone. Check on a live cluster.
 
 **Example**: a container that exits straight away, and a deprecation
-claim to check:
+claim to check. Unlike this chapter's other Pods, this one is created
+without `--restart=Never`, so it gets `restartPolicy: Always` and the
+kubelet keeps restarting it. That's what a crash loop is. (With
+`--restart=Never`, it would just stop at `Error`, with no restarts.)
 
 ```
-kubectl run observability-demo-crashloop-pod --image=busybox:1.36 --restart=Never -- sh -c "echo 'about to fail'; exit 1"
+kubectl run observability-demo-crashloop-pod --image=busybox:1.36 -- sh -c "echo 'about to fail'; exit 1"
 kubectl get pod observability-demo-crashloop-pod
 kubectl describe pod observability-demo-crashloop-pod | grep -A5 Events:
 kubectl logs observability-demo-crashloop-pod
 kubectl get pod observability-demo-crashloop-pod -o jsonpath='{.status.containerStatuses[0].lastState.terminated.exitCode}'
 
-kubectl get node <any-node> -o jsonpath='{.metadata.labels}' | tr ',' '\n' | grep beta.kubernetes.io
+kubectl get nodes -L beta.kubernetes.io/arch,beta.kubernetes.io/os
 ```
 
 **Expected output**: the Events section shows what happened, in order:
@@ -252,17 +262,17 @@ scheduled, image pulled, started, then `BackOff` as the container kept
 exiting. `kubectl logs` and the exit code show why:
 
 ```
-NAME                                READY   STATUS   RESTARTS      AGE
-observability-demo-crashloop-pod   0/1     Error    2 (17s ago)   20s
+NAME                               READY   STATUS   RESTARTS      AGE
+observability-demo-crashloop-pod   0/1     Error    2 (19s ago)   22s
 
 Events:
   Type     Reason     Age               From               Message
   ----     ------     ----              ----               -------
-  Normal   Scheduled  20s               default-scheduler  Successfully assigned default/observability-demo-crashloop-pod to k8s-lab-default-worker2
-  Normal   Pulled     2s (x3 over 19s)  kubelet            Container image "busybox:1.36" already present on machine and can be accessed by the pod
-  Normal   Created    2s (x3 over 19s)  kubelet            Container created
-  Normal   Started    2s (x3 over 18s)  kubelet            Container started
-  Warning  BackOff    1s (x2 over 16s)  kubelet            Back-off restarting failed container app in pod observability-demo-crashloop-pod_default(...)
+  Normal   Scheduled  22s               default-scheduler  Successfully assigned default/observability-demo-crashloop-pod to k8s-lab-default-worker2
+  Normal   Pulled     8s (x3 over 21s)  kubelet            spec.containers{observability-demo-crashloop-pod}: Container image "busybox:1.36" already present on machine and can be accessed by the pod
+  Normal   Created    7s (x3 over 21s)  kubelet            spec.containers{observability-demo-crashloop-pod}: Container created
+  Normal   Started    7s (x3 over 21s)  kubelet            spec.containers{observability-demo-crashloop-pod}: Container started
+  Warning  BackOff    7s (x2 over 19s)  kubelet            spec.containers{observability-demo-crashloop-pod}: Back-off restarting failed container observability-demo-crashloop-pod in pod observability-demo-crashloop-pod_default(...)
 
 about to fail
 1
@@ -274,8 +284,10 @@ Now the deprecation check. The `beta.kubernetes.io/arch` and
 cluster, running **v1.36.1**:
 
 ```
-beta.kubernetes.io/arch:amd64
-beta.kubernetes.io/os:linux
+NAME                            STATUS   ROLES           AGE     VERSION   ARCH    OS
+k8s-lab-default-control-plane   Ready    control-plane   4m4s    v1.36.1   amd64   linux
+k8s-lab-default-worker          Ready    <none>          3m44s   v1.36.1   amd64   linux
+k8s-lab-default-worker2         Ready    <none>          3m44s   v1.36.1   amd64   linux
 ```
 
 They're still there, 18 minor versions later. "Deprecated" is an
@@ -315,3 +327,19 @@ Events:
 Both Pods do have events, so this isn't a case of nothing having
 happened yet. Only `describe` with a selector matching several Pods
 drops them. When you need a Pod's Events, describe it by name.
+
+### Cleaning up
+
+All of this chapter's demo Pods are in the `default` namespace:
+
+```
+kubectl delete pod observability-demo-silent-pod observability-demo-shellless-pod observability-demo-crashloop-pod observability-demo-selector-a observability-demo-selector-b
+```
+
+```
+pod "observability-demo-silent-pod" deleted from default namespace
+pod "observability-demo-shellless-pod" deleted from default namespace
+pod "observability-demo-crashloop-pod" deleted from default namespace
+pod "observability-demo-selector-a" deleted from default namespace
+pod "observability-demo-selector-b" deleted from default namespace
+```
