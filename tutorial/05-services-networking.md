@@ -48,48 +48,67 @@ workload type with one Pod per node, covered in chapter 6):
 	"plugins": [
 	{
 		"type": "ptp",
+		"ipMasq": false,
 		"ipam": {
 			"type": "host-local",
-			"ranges": [ [ { "subnet": "10.244.1.0/24" } ] ]
-			...
+			"dataDir": "/run/cni-ipam-state",
+			"routes": [
+				
+				
+				{ "dst": "0.0.0.0/0" }
+			],
+			"ranges": [
+				
+				
+				[ { "subnet": "10.244.2.0/24" } ]
+			]
 		}
-		...
+		,
+		"mtu": 1500
+		
 	},
-	{ "type": "portmap", "capabilities": { "portMappings": true } }
+	{
+		"type": "portmap",
+		"capabilities": {
+			"portMappings": true
+		}
+	}
 	]
 }
-```
-```
-host-local  loopback  portmap  ptp
-
+host-local
+loopback
+portmap
+ptp
 NAME      DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR            AGE
-kindnet   3         3         3       3            3           kubernetes.io/os=linux   15h
+kindnet   3         3         3       3            3           kubernetes.io/os=linux   22m
 ```
 
-`10.244.1.0/24` is this node's share of the Pod addresses. `ptp` and
-`host-local` are enough for Pods on the same node to reach each other.
-To reach a Pod on another node, the node needs a route to that node's
-addresses, and that's what the `kindnet` Pods add:
+(The third plugin, `portmap`, handles `hostPort`, which this repo's
+ingress uses.) `10.244.2.0/24` is this node's share of the Pod
+addresses. `ptp` and `host-local` are enough for Pods on the same node
+to reach each other. To reach a Pod on another node, the node needs a
+route to that node's addresses, and that's what the `kindnet` Pods
+add:
 
 ```
 docker exec k8s-lab-default-worker ip route
 ```
 
 ```
-default via 172.19.0.1 dev eth0
-10.244.0.0/24 via 172.19.0.2 dev eth0
-10.244.1.3 dev veth916cdb4e scope host
-10.244.2.0/24 via 172.19.0.4 dev eth0
-172.19.0.0/16 dev eth0 proto kernel scope link src 172.19.0.3
+default via 172.18.0.1 dev eth0 
+10.244.0.0/24 via 172.18.0.4 dev eth0 
+10.244.1.0/24 via 172.18.0.3 dev eth0 
+172.18.0.0/16 dev eth0 proto kernel scope link src 172.18.0.2 
 ```
 
-The two routes that matter are `10.244.0.0/24 via 172.19.0.2` and
-`10.244.2.0/24 via 172.19.0.4`: one for each other node, through that
+The two routes that matter are `10.244.0.0/24 via 172.18.0.4` and
+`10.244.1.0/24 via 172.18.0.3`: one for each other node, through that
 node's container IP on the Docker network. The kindnet Pods keep these
-routes up to date. Other CNIs solve the same problem in completely
-different ways (BGP, overlay networks such as VXLAN, eBPF), which is
-why chapter 9 tests NetworkPolicy on both kindnetd and Calico rather
-than assuming they behave the same.
+routes up to date. (Once Pods run on this node, there's also a route
+for each of them, through its own network interface.) Other CNIs solve
+the same problem in completely different ways (BGP, overlay networks
+such as VXLAN, eBPF), which is why chapter 9 tests NetworkPolicy on
+both kindnetd and Calico rather than assuming they behave the same.
 
 ### ClusterIP: the default, cluster-internal Service
 
@@ -110,27 +129,30 @@ selects them:
 ```
 kubectl apply -f tutorial/examples/services-networking/backend-deployment.yaml
 kubectl apply -f tutorial/examples/services-networking/clusterip-service.yaml
+```
+
+When the Pods are running (`kubectl rollout status
+deploy/services-demo-backend`), look at the Service, its EndpointSlice
+and the Pods:
+
+```
 kubectl get svc services-demo-clusterip
 kubectl get endpointslice -l kubernetes.io/service-name=services-demo-clusterip
+kubectl get pods -l app=services-demo -o wide
 ```
 
 **Expected output**: the Service's virtual IP, and an **EndpointSlice**
 listing the IPs of the 3 backend Pods. kube-proxy reads that list:
 
 ```
-NAME                      TYPE        CLUSTER-IP    EXTERNAL-IP   PORT(S)   AGE
-services-demo-clusterip   ClusterIP   10.96.3.130   <none>        80/TCP    8s
-
-NAME                            ADDRESSTYPE   PORTS   ENDPOINTS                            AGE
-services-demo-clusterip-4frlk   IPv4          80      10.244.2.53,10.244.1.8,10.244.2.54   8s
-```
-
-```
-$ kubectl get pods -l app=services-demo -o wide
-NAME                                    READY   STATUS    RESTARTS   AGE   IP            NODE
-services-demo-backend-b848b94c9-8bs8v   1/1     Running   0          9s    10.244.2.54   k8s-lab-default-worker2
-services-demo-backend-b848b94c9-jg8hg   1/1     Running   0          9s    10.244.1.8    k8s-lab-default-worker
-services-demo-backend-b848b94c9-ktbs9   1/1     Running   0          9s    10.244.2.53   k8s-lab-default-worker2
+NAME                      TYPE        CLUSTER-IP      EXTERNAL-IP   PORT(S)   AGE
+services-demo-clusterip   ClusterIP   10.96.162.176   <none>        80/TCP    4s
+NAME                            ADDRESSTYPE   PORTS   ENDPOINTS                             AGE
+services-demo-clusterip-bx8nr   IPv4          80      10.244.2.35,10.244.1.14,10.244.2.36   3s
+NAME                                    READY   STATUS    RESTARTS   AGE   IP            NODE                      NOMINATED NODE   READINESS GATES
+services-demo-backend-b848b94c9-9lbgc   1/1     Running   0          5s    10.244.2.36   k8s-lab-default-worker    <none>           <none>
+services-demo-backend-b848b94c9-dvxks   1/1     Running   0          5s    10.244.2.35   k8s-lab-default-worker    <none>           <none>
+services-demo-backend-b848b94c9-vghrl   1/1     Running   0          5s    10.244.1.14   k8s-lab-default-worker2   <none>           <none>
 ```
 
 The same three addresses. If a Pod were replaced now, the EndpointSlice
@@ -148,7 +170,7 @@ kubectl get endpoints services-demo-clusterip
 ```
 Warning: v1 Endpoints is deprecated in v1.33+; use discovery.k8s.io/v1 EndpointSlice
 NAME                      ENDPOINTS                                      AGE
-services-demo-clusterip   10.244.1.22:80,10.244.2.22:80,10.244.2.23:80   9s
+services-demo-clusterip   10.244.1.14:80,10.244.2.35:80,10.244.2.36:80   4s
 ```
 
 The reason is scale. A Service has a single `Endpoints` object holding
@@ -170,24 +192,39 @@ Service's name, `services-demo-clusterip` or in full
 runs as an ordinary Deployment in `kube-system`. Its configuration, the
 **Corefile**, is stored in the `coredns` ConfigMap (chapter 4).
 
-**Example**: look up the Service's name from inside the cluster, then
-look at the Corefile:
+**Example**: to look names up from inside the cluster, start a busybox
+Pod that just sleeps, as a client. This chapter uses it a few times:
 
 ```
-kubectl run services-demo-dns-check --image=busybox:1.36 --restart=Never --rm -i --command -- nslookup services-demo-clusterip
+kubectl run services-demo-client --image=busybox:1.36 --command -- sleep 3600
+```
+
+When it's running, look up the Service's full name from it, then look
+at the Corefile:
+
+```
+kubectl exec services-demo-client -- nslookup services-demo-clusterip.default.svc.cluster.local
 kubectl get configmap coredns -n kube-system -o jsonpath='{.data.Corefile}'
 ```
 
-**Expected output**: the full name resolves to the Service's IP from
-the previous section:
+**Expected output**: the name resolves to the Service's IP from the
+previous section:
 
 ```
-Server:    10.96.0.10
-Address:   10.96.0.10:53
+Server:		10.96.0.10
+Address:	10.96.0.10:53
 
-Name:  services-demo-clusterip.default.svc.cluster.local
-Address: 10.96.3.130
+
+Name:	services-demo-clusterip.default.svc.cluster.local
+Address: 10.96.162.176
+
 ```
+
+A Pod in the `default` namespace can also use the short name,
+`services-demo-clusterip`: its DNS settings add the namespace's
+domains to short names. busybox's `nslookup` prints a
+`can't find ... NXDOMAIN` line for each domain it tries first, which is
+why the full name gives cleaner output here.
 
 The Corefile is a list of plugins, each handling part of the work: the
 `kubernetes` plugin answers for cluster names, `forward` sends other
@@ -199,7 +236,9 @@ k8s-app=kube-dns`) applies them straight away:
 ```
 .:53 {
     errors
-    health { lameduck 5s }
+    health {
+       lameduck 5s
+    }
     ready
     kubernetes cluster.local in-addr.arpa ip6.arpa {
        pods insecure
@@ -207,8 +246,13 @@ k8s-app=kube-dns`) applies them straight away:
        ttl 30
     }
     prometheus :9153
-    forward . /etc/resolv.conf { max_concurrent 1000 }
-    cache 30 { disable success cluster.local ; disable denial cluster.local }
+    forward . /etc/resolv.conf {
+       max_concurrent 1000
+    }
+    cache 30 {
+       disable success cluster.local
+       disable denial cluster.local
+    }
     loop
     reload
     loadbalance
@@ -230,41 +274,65 @@ reaches ingress-nginx through ports published on one node container
 instead (DESIGN.md, "Ingress: hostPort + node pinning").
 
 **Example**: [`nodeport-service.yaml`](examples/services-networking/nodeport-service.yaml)
-exposes the same backend as a NodePort. Try it from your host, which
-fails, then two ways that work:
+exposes the same backend as a NodePort:
 
 ```
 kubectl apply -f tutorial/examples/services-networking/nodeport-service.yaml
 kubectl get svc services-demo-nodeport
-curl -sS -m 3 localhost:<nodePort>                          # from the Docker host - expected to fail
+```
+
+```
+service/services-demo-nodeport created
+NAME                     TYPE       CLUSTER-IP      EXTERNAL-IP   PORT(S)        AGE
+services-demo-nodeport   NodePort   10.96.206.162   <none>        80:31512/TCP   0s
+```
+
+`80:31512/TCP` means the Service's port 80 is also open on port 31512
+of every node. Yours will probably be a different number; use it below.
+Try it from your host:
+
+```
+curl -sS -m 3 localhost:31512
+```
+
+**Expected output**: it fails, because nothing on your host listens on
+that port:
+
+```
+curl: (7) Failed to connect to localhost:31512 after 0 ms: Could not connect to server
+```
+
+Two ways that work. `port-forward` connects you straight to a Pod
+through the API server; run it in the background with `&`, fetch the
+page, then stop it:
+
+```
 kubectl port-forward svc/services-demo-nodeport 18080:80 &
-curl -sS localhost:18080                                      # via port-forward - works
-docker exec <a-node-container> curl -sS localhost:<nodePort>  # via the node container itself - works
+curl -sS localhost:18080 | head -4
+kill %1
 ```
 
-**Expected output**: the `curl` from your host fails, because nothing
-on your host listens on that port:
-
 ```
-NAME                     TYPE       CLUSTER-IP     EXTERNAL-IP   PORT(S)        AGE
-services-demo-nodeport   NodePort   10.96.140.25   <none>        80:32136/TCP   0s
-
-$ curl -sS -m 3 localhost:32136
-curl: (7) Failed to connect to localhost:32136 after 0 ms: Could not connect to server
-```
-
-The other two work. `port-forward` connects you straight to a Pod
-through the API server, and inside a node container the NodePort is
-open:
-
-```
-$ kubectl port-forward svc/services-demo-nodeport 18080:80 &
 Forwarding from 127.0.0.1:18080 -> 80
-$ curl -sS localhost:18080
-<!DOCTYPE html>...<title>Welcome to nginx!</title>...
+Forwarding from [::1]:18080 -> 80
+Handling connection for 18080
+<!DOCTYPE html>
+<html>
+<head>
+<title>Welcome to nginx!</title>
+```
 
-$ docker exec k8s-lab-default-worker2 curl -sS -m 3 localhost:32136
-<!DOCTYPE html>...<title>Welcome to nginx!</title>...
+And inside a node container, the NodePort is open:
+
+```
+docker exec k8s-lab-default-worker2 curl -sS -m 3 localhost:31512 | head -4
+```
+
+```
+<!DOCTYPE html>
+<html>
+<head>
+<title>Welcome to nginx!</title>
 ```
 
 ### LoadBalancer: requesting a cloud load balancer kind can't provide
@@ -287,16 +355,15 @@ kubectl get svc services-demo-loadbalancer
 ```
 
 **Expected output**: `ingress-nginx-controller` has been `<pending>`
-since the cluster was created, 17 hours here: it won't change. The new
-Service is the same, with a NodePort assigned, as in the previous
-section:
+since the cluster was created, and it won't change. The new Service is
+the same, with a NodePort assigned, as in the previous section:
 
 ```
-NAME                       TYPE           CLUSTER-IP     EXTERNAL-IP   PORT(S)                      AGE
-ingress-nginx-controller   LoadBalancer   10.96.198.99   <pending>     80:32579/TCP,443:31995/TCP   17h
-
-NAME                         TYPE           CLUSTER-IP      EXTERNAL-IP   PORT(S)        AGE
-services-demo-loadbalancer   LoadBalancer   10.96.211.147   <pending>     80:32718/TCP   12s
+NAME                       TYPE           CLUSTER-IP      EXTERNAL-IP   PORT(S)                      AGE
+ingress-nginx-controller   LoadBalancer   10.96.213.231   <pending>     80:30912/TCP,443:31626/TCP   22m
+service/services-demo-loadbalancer created
+NAME                         TYPE           CLUSTER-IP     EXTERNAL-IP   PORT(S)        AGE
+services-demo-loadbalancer   LoadBalancer   10.96.228.45   <pending>     80:31806/TCP   0s
 ```
 
 ### ExternalName: a Service that's really just a DNS alias
@@ -318,7 +385,7 @@ external host:
 ```
 kubectl apply -f tutorial/examples/services-networking/externalname-service.yaml
 kubectl get svc services-demo-externalname
-kubectl run services-demo-externalname-check --image=busybox:1.36 --restart=Never --rm -i --command -- nslookup services-demo-externalname.default.svc.cluster.local
+kubectl exec services-demo-client -- nslookup services-demo-externalname.default.svc.cluster.local
 ```
 
 **Expected output**: `CLUSTER-IP` is `<none>`: there's no virtual IP.
@@ -326,12 +393,17 @@ The DNS answer is a `CNAME` naming the other Service, which then
 resolves to that Service's IP:
 
 ```
+service/services-demo-externalname created
 NAME                         TYPE           CLUSTER-IP   EXTERNAL-IP                                         PORT(S)   AGE
 services-demo-externalname   ExternalName   <none>       services-demo-clusterip.default.svc.cluster.local   <none>    0s
+Server:		10.96.0.10
+Address:	10.96.0.10:53
+
 
 services-demo-externalname.default.svc.cluster.local	canonical name = services-demo-clusterip.default.svc.cluster.local
 Name:	services-demo-clusterip.default.svc.cluster.local
-Address: 10.96.214.43
+Address: 10.96.162.176
+
 ```
 
 kube-proxy isn't involved: there's no virtual IP and no EndpointSlice,
@@ -364,18 +436,22 @@ sends `/` to `services-demo-clusterip`:
 ```
 kubectl apply -f tutorial/examples/services-networking/ingress.yaml
 kubectl get ingress services-demo-ingress
-curl -sS localhost/
+curl -sS -m 5 localhost/ | head -4
 ```
 
 **Expected output**: `CLASS` is `nginx`, and the request goes all the way
-through: your host's port 80, ingress-nginx, the Service, a Pod:
+through: your host's port 80, ingress-nginx, the Service, a Pod. (If
+the first `curl` fails, give ingress-nginx a few seconds to pick up the
+new Ingress.)
 
 ```
+ingress.networking.k8s.io/services-demo-ingress created
 NAME                    CLASS   HOSTS   ADDRESS   PORTS   AGE
-services-demo-ingress   nginx   *                 80      28s
-
-$ curl -sS -m 5 localhost/
-<!DOCTYPE html>...<title>Welcome to nginx!</title>...
+services-demo-ingress   nginx   *                 80      0s
+<!DOCTYPE html>
+<html>
+<head>
+<title>Welcome to nginx!</title>
 ```
 
 `ADDRESS` stays empty, and that's expected. ingress-nginx copies it
@@ -409,7 +485,23 @@ kubectl create configmap coredns -n kube-system \
   --from-file=Corefile=tutorial/examples/services-networking/corefile-rewrite.txt \
   --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n kube-system delete pod -l k8s-app=kube-dns
-kubectl run services-demo-rewrite-check --image=busybox:1.36 --restart=Never --rm -i --command -- nslookup legacy-backend.default.svc.cluster.local
+```
+
+**Expected output**: `kubectl apply` warns that the ConfigMap wasn't
+created with `kubectl apply` (it came with the cluster) and fixes that
+itself. Then the CoreDNS Pods are restarted:
+
+```
+Warning: resource configmaps/coredns is missing the kubectl.kubernetes.io/last-applied-configuration annotation which is required by kubectl apply. kubectl apply should only be used on resources created declaratively by either kubectl create --save-config or kubectl apply. The missing annotation will be patched automatically.
+configmap/coredns configured
+pod "coredns-589f44dc88-7x6dq" deleted from kube-system namespace
+pod "coredns-589f44dc88-b2b6r" deleted from kube-system namespace
+```
+
+A few seconds later, look up the old name:
+
+```
+kubectl exec services-demo-client -- nslookup legacy-backend.default.svc.cluster.local
 ```
 
 **Expected output**: no Service called `legacy-backend` exists, but the
@@ -422,13 +514,43 @@ asked for:
 Server:		10.96.0.10
 Address:	10.96.0.10:53
 
+
 Name:	legacy-backend.default.svc.cluster.local
-Address: 10.96.214.43
+Address: 10.96.162.176
+
 ```
 
-When you're done, restore the original Corefile from your copy:
+When you're done, restore the original Corefile from your copy and
+restart CoreDNS again:
 
 ```
 kubectl create configmap coredns -n kube-system --from-file=Corefile=/tmp/coredns-corefile-original.txt --dry-run=client -o yaml | kubectl apply -f -
 kubectl -n kube-system delete pod -l k8s-app=kube-dns
+```
+
+A few seconds later, `legacy-backend` no longer resolves:
+
+```
+kubectl exec services-demo-client -- nslookup legacy-backend.default.svc.cluster.local
+```
+
+```
+Server:		10.96.0.10
+Address:	10.96.0.10:53
+
+** server can't find legacy-backend.default.svc.cluster.local: NXDOMAIN
+
+** server can't find legacy-backend.default.svc.cluster.local: NXDOMAIN
+
+command terminated with exit code 1
+```
+
+### Cleaning up
+
+Delete the busybox client. The backend, the Services and the Ingress
+can stay: later chapters don't depend on them, and chapter 13's Ingress
+uses a different path, so the two don't clash.
+
+```
+kubectl delete pod services-demo-client
 ```
