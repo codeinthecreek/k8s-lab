@@ -4,6 +4,36 @@ Running log of problems hit while building/operating this lab and what
 fixed them. Newest entries at the top. Not a changelog of features -
 `git log` covers that. This is for things that cost time figuring out.
 
+## 2026-11-19 - `kubectl run -i --rm` with a command that exits at once prints attach warnings and sometimes its output twice
+
+Re-running chapters 5 and 6, `kubectl run <name> --image=busybox:1.36
+--restart=Never -i --rm --command -- nslookup <name>` printed
+`warning: couldn't attach to pod/..., falling back to streaming logs`,
+and often the `nslookup` output twice (once from the attach, once from
+the log fallback), even with `--quiet`. `nslookup` finishes before
+`kubectl` attaches, so `kubectl` races the container's exit. Whether
+the warning and the duplicate appear varies from run to run, so the
+captured output in the chapters never matched a fresh run.
+
+Fix: chapters 5 and 6 start a long-running busybox client
+(`kubectl run <name> --image=busybox:1.36 --command -- sleep 3600`) and
+run lookups with `kubectl exec <name> -- nslookup ...`, which prints the
+same output every time. Use full names
+(`<svc>.<ns>.svc.cluster.local`): busybox's `nslookup` tries each
+search domain first on a short name and prints an `NXDOMAIN` line for
+each, and exits 1 even when the name resolves.
+
+## 2026-11-19 - `quota-storage-pod.yaml` was rejected by the quota in its own namespace
+
+Chapter 7's storage-quota step applied `quota-storage-pod.yaml` into
+`scheduling-demo-governance`, where `scheduling-demo-quota` already
+requires every Pod to declare CPU and memory requests and limits. The
+Pod declared none, so it was rejected (`failed quota: ... must specify
+limits.cpu ...`), and the step's `du` and quota output could not be
+produced as written. The LimitRange that would have filled in defaults
+comes later in the chapter. Fixed by giving the Pod small requests and
+limits that fit the quota.
+
 ## 2026-11-09 - The device plugin chart installs an `mps-control-daemon` DaemonSet even when MPS is not configured
 
 On chart `nvdp/nvidia-device-plugin` 0.20.1, `helm install` creates a
