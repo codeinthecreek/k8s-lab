@@ -46,9 +46,12 @@ data:
 ```
 kubectl apply -f tutorial/examples/config-storage/configmap.yaml
 kubectl apply -f tutorial/examples/config-storage/configmap-pod.yaml
+```
+
+When the Pod is running, look at its environment:
+
+```
 kubectl exec config-storage-demo-cm-pod -- env | grep -E '^(greeting|motd)='
-kubectl exec config-storage-demo-cm-pod -- cat /etc/config/motd
-kubectl exec config-storage-demo-cm-pod -- ls /etc/config
 ```
 
 **Expected output**: the `motd` environment variable does contain both
@@ -65,6 +68,10 @@ With `grep -A1`, which also prints the line after each match, you see
 the second line too:
 
 ```
+kubectl exec config-storage-demo-cm-pod -- env | grep -A1 '^motd='
+```
+
+```
 motd=Line one of the message of the day.
 Line two of the message of the day.
 ```
@@ -73,11 +80,13 @@ The mounted volume has one file per key, and the file has both
 lines:
 
 ```
-$ kubectl exec config-storage-demo-cm-pod -- cat /etc/config/motd
+kubectl exec config-storage-demo-cm-pod -- cat /etc/config/motd
+kubectl exec config-storage-demo-cm-pod -- ls /etc/config
+```
+
+```
 Line one of the message of the day.
 Line two of the message of the day.
-
-$ kubectl exec config-storage-demo-cm-pod -- ls /etc/config
 greeting
 motd
 ```
@@ -111,8 +120,6 @@ mounts it as a file:
 ```
 kubectl apply -f tutorial/examples/config-storage/secret.yaml
 kubectl get secret config-storage-demo-secret -o yaml
-kubectl apply -f tutorial/examples/config-storage/secret-pod.yaml
-kubectl exec config-storage-demo-secret-pod -- cat /etc/secret/password
 ```
 
 **Expected output**: the stored value under `data` is base64. There's no
@@ -121,6 +128,7 @@ kubectl exec config-storage-demo-secret-pod -- cat /etc/secret/password
 chapter 2):
 
 ```yaml
+secret/config-storage-demo-secret created
 apiVersion: v1
 data:
   password: czNjcjN0LWRlbW8tdmFsdWU=
@@ -128,18 +136,41 @@ kind: Secret
 metadata:
   annotations:
     kubectl.kubernetes.io/last-applied-configuration: |
-      {"apiVersion":"v1","kind":"Secret","metadata":{...},"stringData":{"password":"s3cr3t-demo-value"},"type":"Opaque"}
-  ...
+      {"apiVersion":"v1","kind":"Secret","metadata":{"annotations":{},"name":"config-storage-demo-secret","namespace":"default"},"stringData":{"password":"s3cr3t-demo-value"},"type":"Opaque"}
+  creationTimestamp: "2026-11-19T11:51:51Z"
+  name: config-storage-demo-secret
+  namespace: default
+  resourceVersion: "5508"
+  uid: a6de3be2-dccb-4ef5-a0c7-364a2329e742
 type: Opaque
 ```
 
-`czNjcjN0LWRlbW8tdmFsdWU=` decodes to `s3cr3t-demo-value`
-(`echo czNjcjN0LWRlbW8tdmFsdWU= | base64 -d`). The kubelet decodes the
-value when it mounts the Secret, so the file in the Pod holds the
-plain text:
+So anyone who can run `kubectl apply` on a Secret's manifest leaves the
+plain text in this annotation too, another reason to control who can
+read Secrets. Decoding the stored value takes one command:
 
 ```
-$ kubectl exec config-storage-demo-secret-pod -- cat /etc/secret/password
+echo czNjcjN0LWRlbW8tdmFsdWU= | base64 -d
+```
+
+```
+s3cr3t-demo-value
+```
+
+Now mount the Secret in a Pod. The kubelet decodes the value when it
+mounts it, so the file in the Pod holds the plain text:
+
+```
+kubectl apply -f tutorial/examples/config-storage/secret-pod.yaml
+```
+
+When the Pod is running:
+
+```
+kubectl exec config-storage-demo-secret-pod -- cat /etc/secret/password
+```
+
+```
 s3cr3t-demo-value
 ```
 
@@ -158,37 +189,50 @@ into it, delete the Pod, create it again, and look for the file:
 
 ```
 kubectl apply -f tutorial/examples/config-storage/emptydir-pod.yaml
+```
+
+When the Pod is running, write a file and read it back:
+
+```
 kubectl exec config-storage-demo-emptydir-pod -- sh -c "echo scratch data > /scratch/note.txt"
 kubectl exec config-storage-demo-emptydir-pod -- cat /scratch/note.txt
+```
+
+```
+scratch data
+```
+
+Delete the Pod and create it again:
+
+```
 kubectl delete pod config-storage-demo-emptydir-pod
 kubectl apply -f tutorial/examples/config-storage/emptydir-pod.yaml
+```
+
+```
+pod "config-storage-demo-emptydir-pod" deleted from default namespace
+pod/config-storage-demo-emptydir-pod created
+```
+
+The `delete` takes about 30 seconds. The container's only process,
+`sleep`, started by `sh -c`, runs as PID 1 and doesn't handle
+`SIGTERM`, the signal asking it to stop. The kernel ignores unhandled
+signals for PID 1, so the kubelet waits out the 30-second grace period
+and then sends `SIGKILL`. Programs that handle `SIGTERM`, such as
+nginx, stop straight away.
+
+When the new Pod is running, look for the file:
+
+```
 kubectl exec config-storage-demo-emptydir-pod -- cat /scratch/note.txt
 ```
 
-**Expected output**: the file is there until the Pod is deleted. The
-new Pod gets a new, empty volume:
+**Expected output**: it's gone. The new Pod got a new, empty volume:
 
 ```
-$ kubectl exec config-storage-demo-emptydir-pod -- cat /scratch/note.txt
-scratch data
-
-$ kubectl delete pod config-storage-demo-emptydir-pod
-pod "config-storage-demo-emptydir-pod" deleted from default namespace
-
-$ kubectl apply -f tutorial/examples/config-storage/emptydir-pod.yaml
-pod/config-storage-demo-emptydir-pod created
-
-$ kubectl exec config-storage-demo-emptydir-pod -- cat /scratch/note.txt
 cat: can't open '/scratch/note.txt': No such file or directory
 command terminated with exit code 1
 ```
-
-You may notice that `kubectl delete pod` takes about 30 seconds here.
-The container's only process, `sleep`, started by `sh -c`, runs as
-PID 1 and doesn't handle `SIGTERM`, the signal asking it to stop. The
-kernel ignores unhandled signals for PID 1, so the kubelet waits out the
-30-second grace period and then sends `SIGKILL`. Programs that handle
-`SIGTERM`, such as nginx, stop straight away.
 
 ### PersistentVolume and PersistentVolumeClaim: static binding
 
@@ -225,8 +269,6 @@ kubectl apply -f tutorial/examples/config-storage/hostpath-pv.yaml
 kubectl apply -f tutorial/examples/config-storage/hostpath-pvc.yaml
 kubectl get pv config-storage-demo-hostpath-pv
 kubectl get pvc config-storage-demo-hostpath-pvc
-kubectl apply -f tutorial/examples/config-storage/hostpath-pod.yaml
-kubectl exec config-storage-demo-hostpath-pod -- sh -c "echo written-by-pod > /mnt/hostpath/from-pod.txt; cat /mnt/hostpath/from-pod.txt"
 ```
 
 **Expected output**: the PVC is bound to the PV, with no provisioner
@@ -235,17 +277,31 @@ involved:
 ```
 persistentvolume/config-storage-demo-hostpath-pv created
 persistentvolumeclaim/config-storage-demo-hostpath-pvc created
-
-NAME                               STATUS   VOLUME                            CAPACITY   ACCESS MODES   STORAGECLASS   AGE
-config-storage-demo-hostpath-pvc   Bound    config-storage-demo-hostpath-pv   1Gi        RWO                           1s
+NAME                              CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS   CLAIM                                      STORAGECLASS   VOLUMEATTRIBUTESCLASS   REASON   AGE
+config-storage-demo-hostpath-pv   1Gi        RWO            Retain           Bound    default/config-storage-demo-hostpath-pvc                  <unset>                          0s
+NAME                               STATUS   VOLUME                            CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE
+config-storage-demo-hostpath-pvc   Bound    config-storage-demo-hostpath-pv   1Gi        RWO                           <unset>                 0s
 ```
 
-The file the Pod wrote is on the node's own filesystem. You can read it
-there with `docker exec k8s-lab-default-worker cat
-/tmp/config-storage-demo-hostpath/from-pod.txt`:
+Start a Pod that uses the PVC:
 
 ```
-$ kubectl exec config-storage-demo-hostpath-pod -- sh -c "echo written-by-pod > /mnt/hostpath/from-pod.txt; cat /mnt/hostpath/from-pod.txt"
+kubectl apply -f tutorial/examples/config-storage/hostpath-pod.yaml
+```
+
+When it's running, write a file through it, then read the same file on
+the node itself:
+
+```
+kubectl exec config-storage-demo-hostpath-pod -- sh -c "echo written-by-pod > /mnt/hostpath/from-pod.txt; cat /mnt/hostpath/from-pod.txt"
+docker exec k8s-lab-default-worker cat /tmp/config-storage-demo-hostpath/from-pod.txt
+```
+
+**Expected output**: the file the Pod wrote is on the node's own
+filesystem:
+
+```
+written-by-pod
 written-by-pod
 ```
 
@@ -267,8 +323,6 @@ kubectl apply -f tutorial/examples/config-storage/nfs-pv.yaml
 kubectl apply -f tutorial/examples/config-storage/nfs-pvc.yaml
 kubectl get pv config-storage-demo-nfs-pv
 kubectl get pvc config-storage-demo-nfs-pvc
-kubectl apply -f tutorial/examples/config-storage/nfs-pod.yaml
-kubectl exec config-storage-demo-nfs-pod -- sh -c "echo written-by-pod > /mnt/nfs/from-pod.txt; ls -la /mnt/nfs"
 ```
 
 **Expected output**: the PVC is bound to the named PV, shown under
@@ -277,25 +331,32 @@ kubectl exec config-storage-demo-nfs-pod -- sh -c "echo written-by-pod > /mnt/nf
 ```
 persistentvolume/config-storage-demo-nfs-pv created
 persistentvolumeclaim/config-storage-demo-nfs-pvc created
-
-NAME                         CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS   CLAIM                                   STORAGECLASS   AGE
-config-storage-demo-nfs-pv   1Gi        RWX            Retain           Bound    default/config-storage-demo-nfs-pvc                    4s
-
-NAME                          STATUS   VOLUME                       CAPACITY   ACCESS MODES   STORAGECLASS   AGE
-config-storage-demo-nfs-pvc   Bound    config-storage-demo-nfs-pv   1Gi        RWX                           4s
+NAME                         CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS   CLAIM                                 STORAGECLASS   VOLUMEATTRIBUTESCLASS   REASON   AGE
+config-storage-demo-nfs-pv   1Gi        RWX            Retain           Bound    default/config-storage-demo-nfs-pvc                  <unset>                          2s
+NAME                          STATUS   VOLUME                       CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE
+config-storage-demo-nfs-pvc   Bound    config-storage-demo-nfs-pv   1Gi        RWX                           <unset>                 2s
 ```
 
-The Pod mounts the share and writes to it. `hello.txt` was already
-there: it's in `lab-helpers/nfs-server/data/`, the directory the NFS
-server shares:
+Start a Pod that uses it, and when it's running, write a file to the
+share and list it:
+
+```
+kubectl apply -f tutorial/examples/config-storage/nfs-pod.yaml
+kubectl exec config-storage-demo-nfs-pod -- sh -c "echo written-by-pod > /mnt/nfs/from-pod.txt; ls -la /mnt/nfs"
+```
+
+**Expected output**: `hello.txt` was already there: it's in
+`lab-helpers/nfs-server/data/`, the directory the NFS server shares.
+(The owner of that directory and `hello.txt` is shown as numbers: they
+belong to whoever cloned this repo, a user the busybox container
+doesn't know.)
 
 ```
 pod/config-storage-demo-nfs-pod created
-
 total 16
 drwxr-xr-x    2 1000     985           4096 Aug 28 04:31 .
-drwxr-xr-x    3 root     root          4096 Aug 28 04:31 ..
--rw-r--r--    1 root     root            15 Aug 28 04:31 from-pod.txt
+drwxr-xr-x    3 root     root          4096 Nov 19 11:52 ..
+-rw-r--r--    1 root     root            15 Nov 19 11:53 from-pod.txt
 -rw-r--r--    1 1000     985              9 Aug 21 02:08 hello.txt
 ```
 
@@ -321,10 +382,12 @@ StorageClass:
 ```
 persistentvolumeclaim/config-storage-demo-omitted-scn-pvc created
 pod/config-storage-demo-omitted-scn-pod created
-
-NAME                                   STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   AGE
-config-storage-demo-omitted-scn-pvc   Bound    pvc-a7c865a6-418c-424d-8c64-7f02069faecb   1Gi        RWO            standard       7s
+NAME                                  STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE
+config-storage-demo-omitted-scn-pvc   Bound    pvc-9e9f6c96-8cec-4734-97ba-0cde55eabff1   1Gi        RWO            standard       <unset>                 10s
 ```
+
+(If it still says `Pending`, the Pod hasn't been scheduled yet; look
+again a few seconds later.)
 
 Compare that with the NFS PVC: there, `STORAGECLASS` was empty and
 `VOLUME` was the PV you created. That's the difference between `""`
@@ -343,40 +406,50 @@ at a time) and refuses any other access mode.
 
 **Example**: [`pvc-rwx-standard.yaml`](examples/config-storage/pvc-rwx-standard.yaml)
 asks the default StorageClass for `ReadWriteMany` (many nodes at once).
-Again, a Pod has to use the PVC before anything happens:
+Apply it on its own first:
 
 ```
 kubectl apply -f tutorial/examples/config-storage/pvc-rwx-standard.yaml
-kubectl apply -f tutorial/examples/config-storage/pvc-rwx-standard-pod.yaml
 kubectl get pvc config-storage-demo-rwx-pvc
 kubectl describe pvc config-storage-demo-rwx-pvc
 ```
 
-**Expected output**: the PVC stays `Pending`. If you look at it before
-any Pod uses it, all you see is the usual `WaitForFirstConsumer`
-message, which never changes:
+**Expected output**: the PVC is `Pending`, and all you see is the usual
+`WaitForFirstConsumer` message, which never changes. The end of the
+`describe` output:
 
 ```
-NAME                          STATUS    STORAGECLASS   AGE
-config-storage-demo-rwx-pvc   Pending   standard       20s
-
+persistentvolumeclaim/config-storage-demo-rwx-pvc created
+NAME                          STATUS    VOLUME   CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE
+config-storage-demo-rwx-pvc   Pending                                      standard       <unset>                 6s
+...
 Events:
-  Type    Reason                Age  From                          Message
-  ----    ------                ---  ----                          -------
-  Normal  WaitForFirstConsumer  20s  persistentvolume-controller   waiting for first consumer to be created before binding
+  Type    Reason                Age   From                         Message
+  ----    ------                ----  ----                         -------
+  Normal  WaitForFirstConsumer  5s    persistentvolume-controller  waiting for first consumer to be created before binding
 ```
 
-Once a Pod uses it, the provisioner tries to create the volume, and
-the events show why it can't:
+Now start a Pod that uses it,
+[`pvc-rwx-standard-pod.yaml`](examples/config-storage/pvc-rwx-standard-pod.yaml):
 
 ```
+kubectl apply -f tutorial/examples/config-storage/pvc-rwx-standard-pod.yaml
+kubectl describe pvc config-storage-demo-rwx-pvc
+```
+
+**Expected output**: the provisioner tries to create the volume, and the
+events show why it can't:
+
+```
+pod/config-storage-demo-rwx-pod created
+...
 Events:
-  Type     Reason                Age  From                                                                  Message
-  ----     ------                ---  ----                                                                  -------
-  Normal   WaitForFirstConsumer  20s  persistentvolume-controller                                           waiting for first consumer to be created before binding
-  Normal   ExternalProvisioning  14s  persistentvolume-controller                                           Waiting for a volume to be created either by the external provisioner 'rancher.io/local-path' or manually by the system administrator...
-  Normal   Provisioning          5s   rancher.io/local-path_local-path-provisioner-855c7b7774-pkjfx_...      External provisioner is provisioning volume for claim "default/config-storage-demo-rwx-pvc"
-  Warning  ProvisioningFailed    5s   rancher.io/local-path_local-path-provisioner-855c7b7774-pkjfx_...      failed to provision volume with StorageClass "standard": NodePath only supports ReadWriteOnce and ReadWriteOncePod (1.22+) access modes
+  Type     Reason                Age               From                                                                                                Message
+  ----     ------                ----              ----                                                                                                -------
+  Normal   WaitForFirstConsumer  15s               persistentvolume-controller                                                                         waiting for first consumer to be created before binding
+  Normal   Provisioning          10s               rancher.io/local-path_local-path-provisioner-855c7b7774-bbjhp_891ef86b-48bb-4886-9eb6-b4888b61cd0d  External provisioner is provisioning volume for claim "default/config-storage-demo-rwx-pvc"
+  Warning  ProvisioningFailed    10s               rancher.io/local-path_local-path-provisioner-855c7b7774-bbjhp_891ef86b-48bb-4886-9eb6-b4888b61cd0d  failed to provision volume with StorageClass "standard": NodePath only supports ReadWriteOnce and ReadWriteOncePod (1.22+) access modes
+  Normal   ExternalProvisioning  6s (x2 over 10s)  persistentvolume-controller                                                                         Waiting for a volume to be created either by the external provisioner 'rancher.io/local-path' or manually by the system administrator. If volume creation is delayed, please verify that the provisioner is running and correctly registered.
 ```
 
 The Pod stays `Pending` as well, with no events of its own: the
@@ -384,3 +457,31 @@ explanation is on the PVC. So a PVC that's waiting for a Pod and a PVC
 that can't be provisioned look the same until a Pod uses them. When a
 PVC seems stuck, check whether any Pod uses it, as well as its
 events.
+
+### Cleaning up
+
+Every object in this chapter comes from a file in
+`tutorial/examples/config-storage/`, so one command deletes them all.
+It takes about 30 seconds, because of the `sleep` Pods. Then stop the
+NFS server:
+
+```
+kubectl delete -f tutorial/examples/config-storage/
+make nfs-down
+```
+
+The end of the output:
+
+```
+pod "config-storage-demo-secret-pod" deleted from default namespace
+secret "config-storage-demo-secret" deleted from default namespace
+k8s-lab-nfs-server removed (lab-helpers/nfs-server/data left in place)
+```
+
+The two PVs you created yourself are deleted too. The one the
+provisioner created is deleted by the provisioner, a few seconds after
+its PVC: the `standard` StorageClass's reclaim policy is `Delete`. The
+files the Pods wrote stay where they were: `from-pod.txt` in
+`lab-helpers/nfs-server/data/` (which git ignores), and in
+`/tmp/config-storage-demo-hostpath/` on the worker node until the
+cluster is deleted.
