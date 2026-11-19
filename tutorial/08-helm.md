@@ -1,32 +1,31 @@
 # 8. Package management with Helm
 
-Chapters 3 through 7 all used `kubectl apply -f` against one manifest
-(or a small, manually-applied handful) at a time. Helm's job is
-packaging and parameterizing a *whole set* of manifests - a Deployment,
-a Service, a ServiceAccount, and more - as one versioned, installable,
-upgradeable unit. It's covered last, deliberately: everything Helm
-packages is exactly the object types the previous five chapters already
-explained; there's nothing new here about what gets created, only about
-how a bundle of it is templated and tracked as a single release.
+Chapters 3 to 7 applied manifests one at a time with `kubectl apply -f`.
+A real application usually needs several objects together: a
+Deployment, a Service, a ServiceAccount and more. **Helm** packages a
+set like that as one unit that you can install, configure, upgrade and
+remove in one step. Helm creates nothing new: everything it installs
+is an object type from the earlier chapters. What's new is how the set
+is generated from templates and tracked as a whole.
 
-### What Helm actually is: templating plus release tracking
+### What Helm is: templates plus release tracking
 
-**Why**: a Helm **chart** is a directory of Go-template YAML files plus
-a `values.yaml` supplying the variables those templates reference -
-`helm install` renders the templates locally into plain Kubernetes YAML,
-then applies it, the same fundamental operation as `kubectl apply`
-chapters 1-7 have used throughout. What Helm adds on top is a
-**release**: a named, versioned record of what was installed and with
-which values, stored in-cluster (as Secrets, in the release's
-namespace), giving `helm upgrade`/`helm rollback`/`helm uninstall` a
-concept - a whole bundle as one unit - that plain `kubectl apply` has no
-equivalent for.
+**Why**: a Helm **chart** is a directory of YAML templates, plus a
+`values.yaml` file with the settings the templates use. `helm install`
+fills in the templates to produce ordinary Kubernetes YAML and applies
+it to the cluster, much as `kubectl apply` would.
 
-This is written against Helm v4 (v3 moved to security-patch-only
-maintenance as of the v4 release) - chart format itself
-(`apiVersion: v2` in `Chart.yaml`) is unchanged from v3, but v4 defaults
-to **server-side apply** for creating/updating resources rather than a
-client-side diff, which is directly checkable on anything Helm manages:
+What Helm adds is the **release**: a named record of what was installed
+from which chart, with which values. Helm stores it in the cluster, as
+Secrets in the release's namespace. Because of it, you can upgrade, roll
+back or uninstall the whole set as one unit with `helm upgrade`,
+`helm rollback` and `helm uninstall`. Plain `kubectl apply` has nothing
+like that.
+
+This chapter uses Helm v4. Charts themselves haven't changed since v3
+(`apiVersion: v2` in `Chart.yaml`), but v4 applies objects with
+**server-side apply** by default. You can see that on any object Helm
+manages:
 
 ```
 helm version
@@ -44,48 +43,45 @@ helm kube-controller-manager
 Apply
 ```
 
-`manager: helm` with `operation: Apply` on a Deployment this session
-never ran `kubectl apply` against directly is the real evidence - but
-it's field-manager bookkeeping from a genuinely different mechanism
-than chapter 2 covered, not the same one. Chapter 2's `kubectl apply`
-is what's now called *client-side* apply (the default when you don't
-pass `--server-side`): it computes its three-way merge locally and
-relies on the `kubectl.kubernetes.io/last-applied-configuration`
-annotation to know what was previously applied. Server-side apply moves
-that computation into the apiserver itself, which tracks each field's
-owning manager directly and arbitrates conflicts between managers
-server-side - there's no `last-applied-configuration` annotation
-involved at all (check any Helm-managed object's annotations to
-confirm it's absent), because the server no longer needs a client-
-stashed diff to know what changed.
+Every object records which programs (field managers) set its fields.
+Here `helm` set them with the operation `Apply`, which means server-side
+apply.
 
-A couple of smaller v4 CLI changes worth knowing so old material doesn't
-read as broken: `helm fetch` was renamed to `helm pull` (`helm fetch`
-still works as an alias, no error), and `--atomic` was renamed to
-`--rollback-on-failure` - the old flag still functions but prints
-`Flag --atomic has been deprecated, use --rollback-on-failure instead`
-on every use.
+Chapter 2's `kubectl apply` is *client-side* apply (the default unless
+you pass `--server-side`). `kubectl` works out the changes itself, and
+stores the configuration it applied in the
+`kubectl.kubernetes.io/last-applied-configuration` annotation so it can
+compare next time. With server-side apply, the API server does that
+work instead. It records which manager owns each field and settles
+conflicts between managers. No annotation is needed, so objects that
+Helm manages don't have one.
 
-One version-current caution worth stating plainly: Bitnami's free,
-versioned public chart catalog (`bitnami/*`, long the default example in
-most Helm tutorials) was deprecated by Broadcom starting **August 28,
-2025** - most of those charts and images now require a paid subscription
-or point at an unsupported `bitnamilegacy` registry. Anything written
-assuming `bitnami/*` charts are freely available is already stale; this
-chapter uses `helm create` to scaffold a chart locally instead, which
-sidesteps depending on any third-party chart repository's continued
-availability at all.
+Two smaller v4 changes, in case you see the old names elsewhere:
+`helm fetch` is now `helm pull` (the old name still works), and
+`--atomic` is now `--rollback-on-failure` (the old flag still works but
+prints `Flag --atomic has been deprecated, use --rollback-on-failure
+instead`).
+
+Many Helm tutorials use Bitnami's charts (`bitnami/*`) as examples.
+Since **August 28, 2025**, most of those charts and images need a paid
+subscription, or point at an unsupported `bitnamilegacy` registry, so
+those examples may no longer work. This chapter creates its own chart
+with `helm create` instead, so it doesn't depend on anyone else's chart
+repository.
 
 ### Chart anatomy and previewing before applying
 
-**Why**: `helm create <name>` scaffolds a standard chart layout -
-`Chart.yaml` (chart metadata: name, version, `apiVersion: v2`),
-`values.yaml` (the default parameters), and `templates/` (the actual Go-
-template manifests, referencing values as `{{ .Values.xyz }}`). Nothing
-here is Helm-specific magic beyond the templating syntax itself - the
-rendered output is ordinary Kubernetes YAML, and `helm template` lets you
-see exactly that rendered output *without* applying anything, a preview
-step plain `kubectl apply` has no equivalent of.
+**Why**: `helm create <name>` creates a starter chart with the standard
+layout:
+
+- `Chart.yaml`: the chart's name, version and `apiVersion: v2`.
+- `values.yaml`: the default settings.
+- `templates/`: the manifests, with placeholders such as
+  `{{ .Values.replicaCount }}` that are filled in from the values.
+
+`helm template` fills in the templates and prints the result without
+applying anything, so you can see exactly what would be created.
+`kubectl apply` has no equivalent preview.
 
 **Example**: scaffold a chart and render it without installing:
 
@@ -94,9 +90,9 @@ helm create services-demo-chart
 helm template services-demo services-demo-chart/
 ```
 
-**Expected output**: a real chart directory, and rendered plain
-Kubernetes YAML - `{{ .Values.xyz }}` already substituted, `helm
-template` never touches the cluster at all:
+**Expected output**: the chart's files, then plain Kubernetes YAML with
+every placeholder filled in. `helm template` doesn't contact the
+cluster:
 
 ```
 Creating services-demo-chart
@@ -145,23 +141,21 @@ spec:
     app.kubernetes.io/instance: services-demo
 ```
 
-Ordinary `apiVersion`/`kind`/`metadata`/`spec` (chapter 2) all the way
-down - a chart is a code-generation step in front of exactly the object
-types this tutorial already covers, nothing more.
+It's the same `apiVersion`, `kind`, `metadata` and `spec` as in
+chapter 2. A chart is a way of generating the objects you already know,
+nothing more.
 
 ### Installing and managing a release
 
-**Why**: `helm install` both applies the rendered manifests and records
-revision 1 of the release. `helm upgrade` re-renders with new values and
-records the next revision - conceptually the same rolling-update
-mechanism chapter 3 covered for a single Deployment, just scoped to the
-whole chart's worth of objects at once. `helm rollback` reverts to a
-prior revision's rendered state - but, matching the same pattern chapter
-3's Deployment rollback showed, "rolling back" isn't reverting history,
-it's *recording a new revision* whose content happens to match an old
-one; revision numbers only ever go up.
+**Why**: `helm install` applies the generated manifests and records
+them as revision 1 of the release. `helm upgrade` generates them again
+with new values and records revision 2, and so on. `helm rollback`
+returns to an earlier revision's manifests. As with a Deployment's
+rollback in chapter 3, it doesn't go back in history: it records a
+*new* revision with the old content. Revision numbers only go up.
 
-**Example**: install, upgrade a value, then roll back:
+**Example**: install the chart, upgrade it with a different value, then
+roll back:
 
 ```
 helm install services-demo services-demo-chart/
@@ -174,10 +168,10 @@ helm rollback services-demo 1
 helm history services-demo
 ```
 
-**Expected output**: revision 1 is installed, the Deployment shows 1
-replica; upgrading to `replicaCount=2` records revision 2 and the
-Deployment scales up; rolling back to "1" doesn't restore revision 1 -
-it creates **revision 3**, whose rendered content matches revision 1's:
+**Expected output**: the install is revision 1, with 1 replica. The
+upgrade to `replicaCount=2` is revision 2, and the Deployment scales to
+2. Rolling back to 1 creates **revision 3**, with the same content as
+revision 1:
 
 ```
 NAME: services-demo
@@ -211,13 +205,12 @@ NAME                                READY   UP-TO-DATE   AVAILABLE
 services-demo-services-demo-chart   1/1     1            1
 ```
 
-The Deployment is back to 1 replica, but the release is on revision 3,
-not 1 - exactly the append-only revision numbering chapter 3 showed for
-a plain Deployment's rollout history, one layer up.
+The Deployment is back to 1 replica, and the release is at revision 3,
+not 1. It's the same numbering you saw for a Deployment's rollout
+history in chapter 3, one level up.
 
-Cleanup removes every object the chart created, in one command, the same
-"one unit" property that made install/upgrade convenient in the first
-place:
+`helm uninstall` removes every object the chart created, in one
+command:
 
 ```
 helm uninstall services-demo
@@ -234,19 +227,17 @@ No resources found in default namespace.
 
 ### A chart's Service is still just a Service
 
-**Why**: chapter 5's reachability rules don't change because something
-was installed via Helm - a `ClusterIP` Service from a chart is exactly
-as unreachable from the Docker host as any other, and `port-forward` is
-still the reliable path regardless of what a chart's own `NOTES.txt`
-output (printed after every `helm install`/`upgrade`) recommends. Read
-it rather than assume it's correct for this environment specifically -
-NOTES.txt is written by whoever authored the chart, targeting whatever
-environment they had in mind, which may not be a kind cluster's port-
-mapping constraints.
+**Why**: a Service installed by Helm follows the same rules as any other
+(chapter 5). A `ClusterIP` Service can't be reached from your host, and
+`kubectl port-forward` is the reliable way in. After every install and
+upgrade, Helm prints the chart's `NOTES.txt`, usually with instructions
+for reaching the application. The chart's author wrote them for
+whatever environment they had in mind, so read them, but check that
+they suit a kind cluster.
 
-**Example**: `services-demo-chart`'s own NOTES.txt, printed by `helm
-install` above, already gets this right - it recommends `kubectl
-port-forward`, not a bare URL:
+**Example**: the `NOTES.txt` that `helm create` generates, printed by
+`helm install` above, gets this right. It suggests `kubectl
+port-forward`, not a URL:
 
 ```
 1. Get the application URL by running these commands:
@@ -256,8 +247,8 @@ port-forward`, not a bare URL:
   kubectl --namespace default port-forward $POD_NAME 8080:$CONTAINER_PORT
 ```
 
-**Expected output**: following that suggestion works - real nginx
-content, over `port-forward`, exactly like chapter 5:
+**Expected output**: following it works, and nginx answers through
+`port-forward`, as in chapter 5:
 
 ```
 Forwarding from 127.0.0.1:18081 -> 80
@@ -269,41 +260,31 @@ Forwarding from 127.0.0.1:18081 -> 80
 ...
 ```
 
-And a direct connection attempt on the Docker host, bypassing
-`port-forward`, fails exactly the way chapter 5 predicted for any
-`ClusterIP` Service - Helm packaging changes none of that:
+Connecting directly from the host, without `port-forward`, fails, as
+chapter 5 showed for any `ClusterIP` Service:
 
 ```
 curl: (7) Failed to connect to localhost:18081 after 0 ms: Could not connect to server
 ```
 
-### The repository model: installing someone else's published chart
+### Installing a published chart from a repository
 
-**Why**: `helm create` (above) is this chapter's answer to *authoring* a
-chart - it deliberately never depends on a third-party chart repository
-being available, which is exactly why it was chosen after Bitnami's
-catalog was deprecated. But most real Helm usage isn't authoring; it's
-*consuming* a chart someone else already published and maintains. That
-needs a different mechanism: `helm repo add <name> <url>` registers a
-chart repository (an index the client fetches once and caches, not
-anything that touches the cluster), after which `helm search repo`
-searches that local cache and `helm install <release> <repo>/<chart>`
-installs straight from it, without ever cloning or scaffolding
-anything locally. This tutorial keeps both approaches side by side
-deliberately: `helm create` for a chart you're building yourself, the
-repo model for a chart someone else already built.
+**Why**: `helm create` is for writing your own chart. More often you'll
+install a chart that someone else publishes and maintains. Charts are
+published in **chart repositories**. `helm repo add <name> <url>`
+registers one with your Helm client: Helm downloads the repository's
+index and keeps a local copy. That happens only on your machine, not in
+the cluster. After that, `helm search repo` searches the indexes you've
+added, and `helm install <release> <repo>/<chart>` installs a chart
+straight from the repository.
 
-`helm search repo` and `helm search hub` look similar but query
-different things: `search repo` only ever searches repositories you've
-already `helm repo add`-ed locally, while `search hub` queries Artifact
-Hub - a public index of charts across many publishers - directly over
-the network, with no `repo add` step at all. `search hub` is the faster
-way to *discover* a chart; `repo add` is what you need before you can
-actually `helm install` one from a specific repository.
+`helm search hub` is different from `helm search repo`. It searches
+**Artifact Hub**, a public website that lists charts from many
+publishers, with no `repo add` needed. Use `search hub` to find a chart,
+then `repo add` its repository so you can install from it.
 
-**Example**: `stefanprodan/podinfo` is used here for the same reason
-`helm create` was chosen over `bitnami/*` above - it's a small,
-actively-maintained, freely-available chart, not a deprecated one:
+**Example**: `podinfo`, a small, actively maintained chart that's free
+to use:
 
 ```
 helm search hub podinfo
@@ -312,10 +293,10 @@ helm repo list
 helm search repo podinfo
 ```
 
-**Expected output**: `search hub` finds it (and a second, unrelated
-`podinfo` chart from a different publisher) with no local setup at all;
-`repo add` registers the repository, and only then does `search repo`
-find anything - it has nothing to search before that:
+**Expected output**: `search hub` finds two charts called `podinfo`,
+from different publishers. After `repo add`, `search repo` finds the
+one from the repository you added; before it, it would find
+nothing:
 
 ```
 URL                                                    CHART VERSION   APP VERSION   DESCRIPTION
@@ -331,16 +312,16 @@ NAME              CHART VERSION   APP VERSION   DESCRIPTION
 podinfo/podinfo   6.15.0          6.15.0        Podinfo Helm chart for Kubernetes
 ```
 
-Installing from the repository is the same `helm install` already used
-above, just pointed at `<repo>/<chart>` instead of a local directory:
+Installing from a repository uses the same `helm install`, with
+`<repo>/<chart>` instead of a local directory:
 
 ```
 helm install helm-demo-podinfo podinfo/podinfo
 kubectl get pods -l app.kubernetes.io/name=helm-demo-podinfo
 ```
 
-**Expected output**: a real, running Pod, from a chart this session
-never downloaded or unpacked by hand:
+**Expected output**: a running Pod, from a chart you never downloaded
+yourself:
 
 ```
 NAME: helm-demo-podinfo
@@ -351,11 +332,9 @@ NAME                                  READY   STATUS    RESTARTS   AGE
 helm-demo-podinfo-5cff48488c-8j5zb    1/1     Running   0          25s
 ```
 
-**Repo hygiene**: `helm repo add` is a purely local, client-side
-registration - it doesn't touch the cluster, and a stale entry left
-behind is silent clutter, not a running risk, but a one-off repository
-added for a single chart is worth removing once you're done rather than
-letting the local cache accumulate repos that are never searched again:
+**Removing the repository**: a repository you added only affects your
+own Helm client, so leaving it registered does no harm. Still, when you
+added one for a single chart, remove it once you're done:
 
 ```
 helm uninstall helm-demo-podinfo
