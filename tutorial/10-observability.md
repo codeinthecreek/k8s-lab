@@ -1,28 +1,28 @@
 # 10. Observability and troubleshooting
 
-Chapter 9's denials - a forbidden RBAC verb, a rejected `restricted`
-Pod, a dropped NetworkPolicy connection - all looked the same from the
-outside: no crash, no bad config, just a request that never got where
-it was going. This chapter covers the general version of that problem:
-how to look inside a running cluster and diagnose what's wrong, using
-vocabulary chapters 1-9 have already built up - a `CrashLoopBackOff`
-means nothing without chapter 3's restart semantics; a blank `kubectl
-logs` means nothing without knowing what the runtime actually captures.
+In chapter 9, very different problems looked alike from the outside: a
+forbidden RBAC verb, a Pod rejected by Pod Security, a connection
+dropped by a NetworkPolicy. Nothing crashed; a request just never got
+where it was going. This chapter is about finding out what's wrong in
+general: where to look, and what each tool can and can't see. It builds
+on the earlier chapters. A `CrashLoopBackOff`, for example, only makes
+sense once you know how restarts work (chapter 3).
 
 ### Logs: `kubectl logs` only ever shows stdout/stderr
 
-**Why**: `kubectl logs` doesn't read a container's filesystem - it reads
-whatever the container runtime captured from the container's **stdout
-and stderr streams**, full stop. A process that writes only to its own
-internal log file, never to stdout, produces nothing for `kubectl logs`
-to show, no matter how much it's actually logging. On disk, the chain is
-`/var/log/containers/<pod>_<namespace>_<container>-<containerID>.log`
-(a symlink) pointing at
-`/var/log/pods/<namespace>_<pod>_<uid>/<container>/0.log` - the exact
-same stdout/stderr capture `kubectl logs` reads, just from the node's
-filesystem directly.
+**Why**: `kubectl logs` doesn't read files inside the container. It
+shows what the container runtime captured from the container's
+**stdout and stderr**, and nothing else. A program that writes its log
+only to a file of its own shows nothing in `kubectl logs`, however much
+it logs.
 
-**Example**: a container that only writes to an internal file, never
+On the node, the captured output lives in
+`/var/log/pods/<namespace>_<pod>_<uid>/<container>/0.log`, and
+`/var/log/containers/<pod>_<namespace>_<container>-<containerID>.log` is
+a symlink to it. That's the same capture `kubectl logs` shows, read
+straight from the node.
+
+**Example**: a container that writes only to a file, never to
 stdout:
 
 ```
@@ -31,9 +31,9 @@ kubectl logs observability-demo-silent-pod
 kubectl exec observability-demo-silent-pod -- cat /tmp/app.log
 ```
 
-**Expected output**: `kubectl logs` genuinely empty - not an error, just
-nothing, because nothing was ever written to stdout - while the file
-inside the container has real content the entire time:
+**Expected output**: `kubectl logs` prints nothing, without an error,
+because nothing was written to stdout. The file inside the container
+keeps growing:
 
 ```
 $ kubectl logs observability-demo-silent-pod
@@ -45,9 +45,8 @@ internal event Fri Aug 28 06:27:07 UTC 2026
 internal event Fri Aug 28 06:27:12 UTC 2026
 ```
 
-And the node-side file `kubectl logs` and `/var/log/containers/*.log`
-both ultimately read from is confirmed genuinely empty too - not a
-`kubectl`-specific gap, the runtime itself never captured anything:
+On the node, the captured log file is empty too, so it isn't something
+`kubectl` missed: the runtime never received anything:
 
 ```
 $ docker exec <node-container> readlink /var/log/containers/observability-demo-silent-pod_default_app-<id>.log
@@ -59,22 +58,21 @@ $ docker exec <node-container> wc -l /var/log/pods/default_observability-demo-si
 
 ### `kubectl debug` and ephemeral containers
 
-**Why**: plenty of real-world images (**distroless** - an image built
-from just an application binary and its runtime dependencies, with no
-shell, package manager, or OS userland at all - plus `pause`-style,
-minimal scratch-based builds) ship with no debugging tools at all - by
-design, for a smaller attack surface. `kubectl exec ... -- sh` simply
-fails against them. An **ephemeral container** solves this: a
-temporary, purpose-built debug container injected into an *already-
-running* Pod's `spec.ephemeralContainers[]` - a genuinely separate list
-from `spec.containers[]`, not editable via `kubectl edit` (it's its own
-subresource). `kubectl debug -it <pod> --image=<img> --target=<container>
--- sh` is the practical entry point, and `--target` matters specifically:
-it shares the *target* container's process namespace with the debug
-container, so tools that don't exist in the minimal image become
-available without modifying or restarting anything.
+**Why**: many images contain no tools at all, on purpose, to keep them
+small and reduce what an attacker could use. A **distroless** image, for
+example, has the application and its runtime libraries but no shell or
+package manager. `kubectl exec ... -- sh` fails on such an image.
 
-**Example**: `registry.k8s.io/pause` ships no shell whatsoever:
+An **ephemeral container** solves this. It's a temporary debugging
+container that you add to a Pod that's already running. It's listed in
+the Pod's `spec.ephemeralContainers`, separately from
+`spec.containers`, and can't be added with `kubectl edit`.
+`kubectl debug <pod> --image=<image> --target=<container>` adds one.
+`--target` makes the debugging container share the target container's
+process namespace, so your tools can see and inspect its processes,
+without changing or restarting the Pod.
+
+**Example**: the `registry.k8s.io/pause` image has no shell at all:
 
 ```
 kubectl run observability-demo-shellless-pod --image=registry.k8s.io/pause:3.10 --restart=Never
@@ -84,10 +82,9 @@ kubectl get pod observability-demo-shellless-pod -o jsonpath='{.spec.ephemeralCo
 kubectl get pod observability-demo-shellless-pod -o jsonpath='{.spec.containers[*].name}'
 ```
 
-**Expected output**: `exec` fails outright - there's no `sh` to run.
-`kubectl debug` attaches a busybox debug container that can see the
-*target's* real process (PID 1, `/pause`) despite having none of its own
-processes to speak of:
+**Expected output**: `exec` fails, because there's no `sh` to run. The
+busybox debugging container can see the target's own process, `/pause`,
+as PID 1:
 
 ```
 $ kubectl exec observability-demo-shellless-pod -- sh -c "echo hi"
@@ -105,10 +102,9 @@ PID   USER     TIME  COMMAND
 pause
 ```
 
-`PID 1` is `/pause` - the target container's own process, visible from
-inside a completely separate debug container because `--target` shared
-the process namespace between them. And the two fields really are
-distinct:
+PID 1 is `/pause`, the target container's process, visible from a
+separate container because `--target` shared the process namespace. And
+the two lists really are separate:
 
 ```
 debugger-d77f6      # .spec.ephemeralContainers[*].name
@@ -117,30 +113,29 @@ app                 # .spec.containers[*].name
 
 ### `crictl`: the node's CRI-level view, independent of the API server
 
-**Why**: everything so far - `kubectl logs`, `kubectl debug`, even
-`kubectl get pod` - is mediated by the apiserver and, transitively, by
-the kubelet reporting into it. That chain is exactly what's unavailable
-if either one is unhealthy: a wedged kubelet or an unreachable apiserver
-still leaves the container runtime itself running real workloads on the
-node, with no `kubectl` command able to see them. `crictl` talks
-directly to the CRI socket on the node - containerd here, same as every
-profile in this repo - bypassing the apiserver and kubelet entirely.
-It's not a `kubectl` plugin or anything installed cluster-wide; it's a
-binary already present inside each kind node's container, reached the
-same way chapter 1's node-as-container model reaches anything else on a
-node: `docker exec <node>`.
+**Why**: everything so far, even `kubectl get pod`, goes through the
+apiserver, which gets its information about Pods from each node's
+kubelet. If either of them is in trouble, `kubectl` can't tell you
+what's running, although the container runtime on the node keeps
+running the containers.
 
-**Example**: list every container the CRI knows about, on one node,
-with no `kubectl` involved at all:
+`crictl` talks directly to the container runtime on the node
+(containerd, in every profile in this repo), without the apiserver or
+the kubelet. It's already installed in each kind node container, so you
+reach it with `docker exec <node>`, like anything else on a node
+(chapter 1).
+
+**Example**: list the containers running on one node, without
+`kubectl`:
 
 ```
 docker exec k8s-lab-default-worker crictl ps
 ```
 
-**Expected output**: real containers, keyed by CRI container ID and
-Pod, for every workload the runtime is actually running on that node -
-the same Pods `kubectl get pods -A --field-selector spec.nodeName=k8s-lab-default-worker`
-would show, arrived at through a completely different path:
+**Expected output**: one line per container, with its Pod and
+namespace. These are the same Pods that `kubectl get pods -A
+--field-selector spec.nodeName=k8s-lab-default-worker` would list, found
+a completely different way:
 
 ```
 CONTAINER      IMAGE           CREATED         STATE     NAME             ATTEMPT   POD ID         POD                                NAMESPACE
@@ -149,23 +144,17 @@ CONTAINER      IMAGE           CREATED         STATE     NAME             ATTEMP
 c80041e4fe698  e44e5463fce88   12 minutes ago  Running   kindnet-cni      0         1a2e23576f423  kindnet-6wnfv                     kube-system
 ```
 
-`crictl pods` shows the same information one level up, at Pod-sandbox
-granularity rather than per-container - useful when the question is
-"what Pods does this node's runtime think are running" rather than "what
-containers." Either way, this is the runtime's own bookkeeping, current
-and accurate on this node regardless of what the apiserver or kubelet on
-that node are doing right now.
+`crictl pods` lists Pods (sandboxes) instead of containers. Either way,
+this is the runtime's own record of what's running on the node, and it
+stays accurate whatever the apiserver or the kubelet are doing.
 
 ### `journalctl -u kubelet`: the kubelet's own logs, on the node
 
-**Why**: `kubectl logs` (this chapter's first section) only ever shows a
-*container's* stdout/stderr - it has nothing to say about the kubelet
-itself, the process on each node responsible for actually starting
-those containers in the first place. On a systemd-based node image
-(this repo's `kindest/node` build included), the kubelet runs as a
-systemd unit and its logs go to the journal, reached with the same
-`docker exec <node>` pattern already used for `crictl` above and for
-inspecting `containerd`'s config in `docs/findings.md`.
+**Why**: `kubectl logs` shows a container's output. It says nothing
+about the kubelet itself, the program on each node that starts the
+containers. On this repo's `kindest/node` image, the kubelet runs as a
+systemd service, so its logs are in the systemd journal. You read them
+with `journalctl`, again through `docker exec <node>`.
 
 **Example**:
 
@@ -173,38 +162,34 @@ inspecting `containerd`'s config in `docs/findings.md`.
 docker exec k8s-lab-default-worker journalctl -u kubelet --no-pager -n 15
 ```
 
-**Expected output**: real, current kubelet log lines - volume
-mount/unmount bookkeeping, pod startup latency tracking, and anything
-the kubelet itself is doing on that node right now, independent of
-whether any particular container's own logs say anything at all:
+**Expected output**: the kubelet's recent log lines, here about mounting
+volumes and how long a Pod took to start:
 
 ```
 Sep 03 01:01:41 k8s-lab-default-worker kubelet[315]: I0903 01:01:41.025050     315 reconciler_common.go:251] "operationExecutor.VerifyControllerAttachedVolume started for volume ..." pod="scheduling-demo-governance/scheduling-demo-quota-storage-pod"
 Sep 03 01:01:49 k8s-lab-default-worker kubelet[315]: I0903 01:01:49.687449     315 pod_startup_latency_tracker.go:148] "Observed pod startup duration" pod="scheduling-demo-governance/scheduling-demo-quota-storage-pod" podStartSLOduration=13.677716157999999 podStartE2EDuration="20.687419379s"
 ```
 
-This is the layer below `kubectl describe`'s Events section (later in
-this chapter): Events are what the kubelet chose to report back to the
-apiserver about a Pod; the kubelet's own journal is everything it
-actually did, including internal bookkeeping no Event ever surfaces.
-Reach for it when a Pod's behavior doesn't match what its Events say, or
-when the question is about the node's kubelet itself rather than any
-one Pod on it.
+This is one level below the Events in `kubectl describe` (later in this
+chapter). Events are what the kubelet chose to report to the apiserver
+about a Pod. Its journal records everything it did, including details no
+Event shows. Look there when a Pod behaves differently from what its
+Events say, or when the problem is with the kubelet itself.
 
 ### metrics-server: resource metrics, not logs or events
 
-**Why**: `kubectl top` depends on metrics-server, a separate aggregated
-API (`v1beta1.metrics.k8s.io`) that scrapes each kubelet's `/stats`
-endpoint on an interval and exposes current CPU/memory usage - distinct
-from both logs (this chapter's first section) and from the
-requests/limits chapter 7 covered (metrics-server reports *actual*
-usage; requests/limits are declared intent, checked independently).
-This repo's `manifests/metrics/metrics-server.yaml` (currently pinned at
-**v0.9.0**) carries one deliberate deviation from upstream:
-`--kubelet-insecure-tls`, because kind's kubelet serving certificates
-are self-signed without a SAN metrics-server will accept otherwise - a
-kind-specific workaround, not something to carry into a real cluster's
-config (see DESIGN.md's "metrics-server and `--kubelet-insecure-tls`"
+**Why**: `kubectl top` shows how much CPU and memory nodes and Pods are
+using right now. It gets the numbers from **metrics-server**, a separate
+program registered as an aggregated API (`v1beta1.metrics.k8s.io`,
+chapter 11), which regularly collects resource metrics from each node's
+kubelet. These are *actual* usage figures, unlike the requests and
+limits from chapter 7, which are what a Pod asked for.
+
+This repo's `manifests/metrics/metrics-server.yaml` pins **v0.9.0**, with
+one change from upstream: `--kubelet-insecure-tls`. kind's kubelets use
+self-signed serving certificates that metrics-server wouldn't otherwise
+accept. That flag is a workaround for kind only; don't copy it to a real
+cluster (see DESIGN.md's "metrics-server and `--kubelet-insecure-tls`"
 section).
 
 **Example**:
@@ -215,9 +200,8 @@ kubectl top nodes
 kubectl top pods -A
 ```
 
-**Expected output**: a real version string, and real numbers back
-immediately - no "metrics not yet available" delay once the apiservice
-is actually registered:
+**Expected output**: the image version, then current numbers. Once the
+API is registered, they're available straight away:
 
 ```
 registry.k8s.io/metrics-server/metrics-server:v0.9.0
@@ -228,30 +212,30 @@ k8s-lab-default-worker          32m          0%       179Mi           1%
 k8s-lab-default-worker2         58m          0%       206Mi           1%
 ```
 
-If `kubectl top` instead returns `error: Metrics API not available`,
-check `kubectl get apiservice v1beta1.metrics.k8s.io` before assuming
-metrics-server itself is broken - `AVAILABLE: False` with reason
-`MissingEndpoints` means the metrics-server Pod isn't actually up yet
-(or crash-looping), which is a Pod-health problem, not a metrics-API
-problem. Hit exactly this while writing this chapter: metrics-server sat
-in `ImagePullBackOff` from an unrelated host DNS resolver flake (see
-`docs/findings.md`'s 2026-08-24 entry) - once the underlying Pod
-actually pulled its image and started, the apiservice registered and
-`kubectl top` worked immediately.
+If `kubectl top` says `error: Metrics API not available`, check
+`kubectl get apiservice v1beta1.metrics.k8s.io` first. `AVAILABLE: False`
+with the reason `MissingEndpoints` means the metrics-server Pod isn't
+running (or is crash-looping): a problem with the Pod, not with the
+metrics API. That happened while this chapter was being written:
+metrics-server was stuck in `ImagePullBackOff` because of a DNS problem
+on the host (the same cause as `docs/findings.md`'s 2026-08-24 entry).
+As soon as the Pod pulled its image and started, the API became
+available and `kubectl top` worked.
 
 ### Common failure-mode diagnosis
 
-**Why**: a few habits cover most real troubleshooting: read `kubectl
-describe`'s Events section before anything else (it's populated by the
-exact controllers/kubelet actions that got a Pod to its current state,
-in order); know that `describe`'s output shape changes depending on how
-you invoke it, not just what it's describing; and don't trust a
-"deprecated" or "planned for removal" claim as evidence something was
-actually removed on schedule - verify against the live cluster, the
-same principle this entire tutorial has followed throughout.
+**Why**: a few habits cover most troubleshooting:
 
-**Example**: a container that exits immediately, and a claim worth
-checking rather than assuming:
+- Read the Events section of `kubectl describe` first. It lists, in
+  order, what the scheduler and the kubelet did to get the Pod where it
+  is.
+- Know that `kubectl describe` shows different things depending on how
+  you call it (see the end of this section).
+- Don't take "deprecated" or "planned for removal" as proof that
+  something is gone. Check on a live cluster.
+
+**Example**: a container that exits straight away, and a deprecation
+claim to check:
 
 ```
 kubectl run observability-demo-crashloop-pod --image=busybox:1.36 --restart=Never -- sh -c "echo 'about to fail'; exit 1"
@@ -263,10 +247,9 @@ kubectl get pod observability-demo-crashloop-pod -o jsonpath='{.status.container
 kubectl get node <any-node> -o jsonpath='{.metadata.labels}' | tr ',' '\n' | grep beta.kubernetes.io
 ```
 
-**Expected output**: the Events section shows exactly what happened, in
-order - scheduled, pulled, started, then `BackOff` once it kept exiting
-- and `kubectl logs` plus the real exit code confirm why, no guessing
-required:
+**Expected output**: the Events section shows what happened, in order:
+scheduled, image pulled, started, then `BackOff` as the container kept
+exiting. `kubectl logs` and the exit code show why:
 
 ```
 NAME                                READY   STATUS   RESTARTS      AGE
@@ -285,29 +268,25 @@ about to fail
 1
 ```
 
-And the "deprecated" check: `beta.kubernetes.io/arch` and
-`beta.kubernetes.io/os` node labels were proposed for removal back in
-**1.18**, and current material sometimes states or implies they're gone.
-Live on this cluster, right now, on **v1.36.1**:
+Now the deprecation check. The `beta.kubernetes.io/arch` and
+`beta.kubernetes.io/os` node labels were marked for removal back in
+**1.18**, and some material says or implies they're gone. On this
+cluster, running **v1.36.1**:
 
 ```
 beta.kubernetes.io/arch:amd64
 beta.kubernetes.io/os:linux
 ```
 
-Still there, eight years of Kubernetes minor versions after the
-deprecation notice. "Deprecated" is a schedule someone announced, not a
-guarantee of what actually happened - the only way to know which is
-true for a given claim is to check a live cluster, exactly as this
-tutorial has done for every chapter before this one.
+They're still there, 18 minor versions later. "Deprecated" is an
+announced plan, not a record of what happened. To know whether a
+removal actually happened, check a live cluster.
 
-One more habit worth checking rather than assuming: `kubectl describe`
-against an exact Pod name and `kubectl describe` against a `-l` selector
-that happens to match exactly one Pod look identical, which makes it
-easy to assume selector-based `describe` always works the same way. It
-doesn't - the moment a selector matches more than one Pod, the Events
-section is silently dropped from the output entirely, not merged,
-truncated, or labeled per-Pod:
+One more surprise. `kubectl describe` with an exact Pod name and
+`kubectl describe` with a `-l` selector that matches one Pod look the
+same. But when a selector matches *more* than one Pod, the Events
+sections disappear from the output completely. They aren't merged or
+shortened; they're just not there:
 
 ```
 kubectl run observability-demo-selector-a --image=busybox:1.36 --restart=Never --labels="app=observability-demo-selector" -- sh -c "sleep 3600"
@@ -317,10 +296,9 @@ kubectl describe pod observability-demo-selector-a | grep -A5 "^Events:"
 kubectl describe pod -l app=observability-demo-selector | grep -c "^Events:"
 ```
 
-**Expected output**: the exact-name `describe` shows a normal Events
-section; the selector-based `describe`, run against the same two Pods,
-contains zero occurrences of the `Events:` header at all - not an empty
-section, the header itself is absent:
+**Expected output**: `describe` by name shows a normal Events section.
+`describe` by selector, for the same two Pods, contains no `Events:`
+header at all:
 
 ```
 Events:
@@ -334,8 +312,6 @@ Events:
 0
 ```
 
-Both Pods have real events - this isn't a case of nothing having
-happened yet. It's specifically the multi-Pod selector path through
-`kubectl describe` that drops them. Reach for an exact Pod name, not a
-label selector, whenever the Events section itself is what you actually
-need to see.
+Both Pods do have events, so this isn't a case of nothing having
+happened yet. Only `describe` with a selector matching several Pods
+drops them. When you need a Pod's Events, describe it by name.
