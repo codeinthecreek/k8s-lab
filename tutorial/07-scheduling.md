@@ -40,8 +40,8 @@ kubectl get nodes -l scheduling-demo/zone=zone-a
 ```
 node/k8s-lab-default-worker labeled
 
-NAME                     STATUS   ROLES    AGE   VERSION
-k8s-lab-default-worker   Ready    <none>   17h   v1.36.1
+NAME                     STATUS   ROLES    AGE     VERSION
+k8s-lab-default-worker   Ready    <none>   6m24s   v1.36.1
 ```
 
 ### Node affinity: choosing nodes by label
@@ -69,11 +69,13 @@ kubectl apply -f tutorial/examples/scheduling/node-affinity-pod.yaml
 kubectl get pod scheduling-demo-affinity-pod -o wide
 ```
 
-**Expected output**: the Pod runs on the labelled node:
+**Expected output**: the Pod runs on the labelled node (on a new cluster
+it may show `ContainerCreating` for a minute while `nginx:1.27` is
+pulled; the `NODE` is already set):
 
 ```
-NAME                           READY   STATUS    RESTARTS   AGE   IP           NODE
-scheduling-demo-affinity-pod   1/1     Running   0          3s    10.244.1.9   k8s-lab-default-worker
+NAME                           READY   STATUS    RESTARTS   AGE   IP           NODE                     NOMINATED NODE   READINESS GATES
+scheduling-demo-affinity-pod   1/1     Running   0          78s   10.244.2.7   k8s-lab-default-worker   <none>           <none>
 ```
 
 Now a Pod that requires a label value no node has:
@@ -88,19 +90,21 @@ kubectl describe pod scheduling-demo-affinity-impossible-pod | grep -A3 Events:
 event gives a reason for every node:
 
 ```
-NAME                                       READY   STATUS    RESTARTS   AGE
-scheduling-demo-affinity-impossible-pod   0/1     Pending   0          14s
-
+NAME                                      READY   STATUS    RESTARTS   AGE
+scheduling-demo-affinity-impossible-pod   0/1     Pending   0          5s
 Events:
   Type     Reason            Age   From               Message
   ----     ------            ----  ----               -------
-  Warning  FailedScheduling  17s   default-scheduler  0/3 nodes are available: 1 node(s) had untolerated taint(s), 2 node(s) didn't match Pod's node affinity/selector.
+  Warning  FailedScheduling  5s    default-scheduler  0/3 nodes are available: 1 node(s) had untolerated taint(s), 2 node(s) didn't match Pod's node affinity/selector. no new claims to deallocate, preemption: 0/3 nodes are available: 3 Preemption is not helpful for scheduling.
 ```
 
 Three nodes, two reasons. The two workers don't have the required
 label. The control-plane node is excluded because of its
 `NoSchedule` taint (chapter 1; taints are explained later in this
 chapter), which keeps ordinary Pods off it whatever their affinity.
+The end of the message is about preemption, covered later in this
+chapter: evicting other Pods wouldn't help, since no node can ever
+match.
 
 ### Pod affinity and anti-affinity: placing Pods near or apart from others
 
@@ -135,8 +139,8 @@ kubectl get pod scheduling-demo-colocate-anchor -o wide
 here `k8s-lab-default-worker2`:
 
 ```
-NAME                              READY   STATUS    RESTARTS   AGE   IP           NODE
-scheduling-demo-colocate-anchor   1/1     Running   0          2s    10.244.1.3   k8s-lab-default-worker2
+NAME                              READY   STATUS    RESTARTS   AGE   IP           NODE                      NOMINATED NODE   READINESS GATES
+scheduling-demo-colocate-anchor   1/1     Running   0          65s   10.244.1.5   k8s-lab-default-worker2   <none>           <none>
 ```
 
 [`pod-affinity-pod.yaml`](examples/scheduling/pod-affinity-pod.yaml)
@@ -151,8 +155,8 @@ kubectl get pod scheduling-demo-affinity-copod -o wide
 **Expected output**: it runs on the same node as the first Pod:
 
 ```
-NAME                              READY   STATUS    RESTARTS   AGE   IP           NODE
-scheduling-demo-affinity-copod    1/1     Running   0          3s    10.244.1.4   k8s-lab-default-worker2
+NAME                             READY   STATUS    RESTARTS   AGE   IP           NODE                      NOMINATED NODE   READINESS GATES
+scheduling-demo-affinity-copod   1/1     Running   0          56s   10.244.1.6   k8s-lab-default-worker2   <none>           <none>
 ```
 
 [`pod-anti-affinity-pod.yaml`](examples/scheduling/pod-anti-affinity-pod.yaml)
@@ -167,8 +171,8 @@ kubectl get pod scheduling-demo-antiaffinity-pod -o wide
 **Expected output**: it runs on the other worker:
 
 ```
-NAME                                READY   STATUS    RESTARTS   AGE   IP           NODE
-scheduling-demo-antiaffinity-pod   1/1     Running   0          44s   10.244.2.5   k8s-lab-default-worker
+NAME                               READY   STATUS    RESTARTS   AGE   IP           NODE                     NOMINATED NODE   READINESS GATES
+scheduling-demo-antiaffinity-pod   1/1     Running   0          48s   10.244.2.8   k8s-lab-default-worker   <none>           <none>
 ```
 
 Both rules matched the same label, `app=scheduling-demo-colocate`, and
@@ -184,17 +188,36 @@ taint. You've already met one: kind's control-plane node has the taint
 don't run there.
 
 A taint has a key, an optional value, and an **effect**. There are
-three effects. `kubectl explain node.spec.taints.effect` describes
-them:
+three effects, and the API documentation describes them:
+
 ```
-- NoExecute:        Evict any already-running pods that do not tolerate the
-                     taint. Currently enforced by NodeController.
-- NoSchedule:        Do not allow new pods to schedule onto the node unless
-                     they tolerate the taint, but allow all already-running
-                     pods to continue running. Enforced by the scheduler.
-- PreferNoSchedule:  Like NoSchedule, but the scheduler tries not to
-                     schedule new pods onto the node rather than
-                     prohibiting it entirely. Enforced by the scheduler.
+kubectl explain node.spec.taints.effect
+```
+
+```
+KIND:       Node
+VERSION:    v1
+
+FIELD: effect <string>
+ENUM:
+    NoExecute
+    NoSchedule
+    PreferNoSchedule
+
+DESCRIPTION:
+    Required. The effect of the taint on pods that do not tolerate the taint.
+    Valid effects are NoSchedule, PreferNoSchedule and NoExecute.
+    
+    Possible enum values:
+     - `"NoExecute"` Evict any already-running pods that do not tolerate the
+    taint. Currently enforced by NodeController.
+     - `"NoSchedule"` Do not allow new pods to schedule onto the node unless
+    they tolerate the taint, but allow all pods submitted to Kubelet without
+    going through the scheduler to start, and allow all already-running pods to
+    continue running. Enforced by the scheduler.
+     - `"PreferNoSchedule"` Like TaintEffectNoSchedule, but the scheduler tries
+    not to schedule new pods onto the node, rather than prohibiting new pods
+    from scheduling onto the node entirely. Enforced by the scheduler.
 ```
 
 So `NoSchedule` only stops *new* Pods; Pods already on the node keep
@@ -202,27 +225,45 @@ running. `NoExecute` also evicts the Pods already running there.
 Removing a taint doesn't undo anything: evicted Pods don't come back,
 and nothing moves back to the node just because it now could.
 
-**Example**: start a Pod with no toleration on the labelled node, then
-give the node a `NoExecute` taint and see what happens to the Pod:
+**Example**: start a Pod with no toleration on the labelled node:
 
 ```
 kubectl apply -f tutorial/examples/scheduling/taint-pretaint-pod.yaml
 kubectl get pod scheduling-demo-notoleration-pod -o wide
+```
+
+```
+pod/scheduling-demo-notoleration-pod created
+NAME                               READY   STATUS    RESTARTS   AGE   IP           NODE                     NOMINATED NODE   READINESS GATES
+scheduling-demo-notoleration-pod   1/1     Running   0          6s    10.244.2.9   k8s-lab-default-worker   <none>           <none>
+```
+
+Now give the node a `NoExecute` taint:
+
+```
 kubectl taint node k8s-lab-default-worker scheduling-demo=maintenance:NoExecute
+```
+
+```
+node/k8s-lab-default-worker tainted
+```
+
+A few seconds later, the Pod has been evicted and deleted. (If you look
+quickly, you may see it as `Completed` first: nginx exits cleanly when
+it's told to stop.)
+
+```
 kubectl get pod scheduling-demo-notoleration-pod
 ```
 
-**Expected output**: the Pod is running until the taint is added. By the
-next `get`, it's already gone:
-
 ```
-NAME                               READY   STATUS    RESTARTS   AGE   IP            NODE
-scheduling-demo-notoleration-pod   1/1     Running   0          3s    10.244.1.10   k8s-lab-default-worker
-
-node/k8s-lab-default-worker tainted
-
 Error from server (NotFound): pods "scheduling-demo-notoleration-pod" not found
 ```
+
+The taint applies to every Pod on the node, so
+`scheduling-demo-affinity-pod` and `scheduling-demo-antiaffinity-pod`
+from the affinity sections, which also ran on `k8s-lab-default-worker`,
+were evicted too. `kubectl get pods -o wide` no longer lists them.
 
 A Pod that tolerates the taint can be scheduled on the node and
 stays there:
@@ -232,16 +273,16 @@ kubectl apply -f tutorial/examples/scheduling/toleration-pod.yaml
 kubectl get pod scheduling-demo-toleration-pod -o wide
 ```
 
-**Expected output**: it runs on the tainted node, and is still running
-when you check again about 10 seconds later:
+**Expected output**: it runs on the tainted node:
 
 ```
-NAME                             READY   STATUS    RESTARTS   AGE   IP            NODE
-scheduling-demo-toleration-pod   1/1     Running   0          2s    10.244.1.11   k8s-lab-default-worker
-
-# ~10s later
-scheduling-demo-toleration-pod   1/1     Running   0          14s   10.244.1.11   k8s-lab-default-worker
+pod/scheduling-demo-toleration-pod created
+NAME                             READY   STATUS    RESTARTS   AGE   IP            NODE                     NOMINATED NODE   READINESS GATES
+scheduling-demo-toleration-pod   1/1     Running   0          4s    10.244.2.13   k8s-lab-default-worker   <none>           <none>
 ```
+
+Run the `get` again after 10 seconds or so: it's still running, not
+evicted.
 
 Removing the taint doesn't bring back the evicted Pod. It was a bare Pod
 (chapter 3), with no controller to recreate it:
@@ -256,7 +297,6 @@ changes what can happen from now on:
 
 ```
 node/k8s-lab-default-worker untainted
-
 Error from server (NotFound): pods "scheduling-demo-notoleration-pod" not found
 ```
 
@@ -308,34 +348,56 @@ allocate 150M, more than the limit:
 ```
 kubectl apply -f tutorial/examples/scheduling/resource-oom-pod.yaml
 kubectl get pod scheduling-demo-oom-pod -o jsonpath='{.status.qosClass}'
-kubectl get pod scheduling-demo-oom-pod
-kubectl describe pod scheduling-demo-oom-pod | grep -A5 "Last State"
 ```
 
 **Expected output**: `Burstable` (requests are set, but lower than the
-limits). The container is killed for using too much memory, restarts,
-is killed again, and ends up in `CrashLoopBackOff`:
+limits):
 
 ```
+pod/scheduling-demo-oom-pod created
 Burstable
 ```
 
+Watch the Pod for a minute with `-w`, then stop with Ctrl-C:
+
 ```
-NAME                      READY   STATUS      RESTARTS      AGE
-scheduling-demo-oom-pod   0/1     OOMKilled   0             6s
-scheduling-demo-oom-pod   0/1     OOMKilled   1 (6s ago)    9s
-scheduling-demo-oom-pod   0/1     CrashLoopBackOff   1 (14s ago)   21s
-scheduling-demo-oom-pod   0/1     OOMKilled   2 (17s ago)   24s
+kubectl get pod scheduling-demo-oom-pod -w
+```
+
+**Expected output**: each time the container starts, it's killed for
+using too much memory (`OOMKilled`) and restarted, with longer waits in
+`CrashLoopBackOff` in between:
+
+```
+NAME                      READY   STATUS    RESTARTS   AGE
+scheduling-demo-oom-pod   0/1     Pending   0          0s
+scheduling-demo-oom-pod   0/1     ContainerCreating   0          0s
+scheduling-demo-oom-pod   0/1     ContainerCreating   0          1s
+scheduling-demo-oom-pod   1/1     Running             0          12s
+scheduling-demo-oom-pod   0/1     OOMKilled           0          13s
+scheduling-demo-oom-pod   1/1     Running             1 (5s ago)   16s
+scheduling-demo-oom-pod   0/1     OOMKilled           1 (5s ago)   16s
+scheduling-demo-oom-pod   0/1     CrashLoopBackOff    1 (15s ago)   30s
+scheduling-demo-oom-pod   1/1     Running             2 (18s ago)   33s
+scheduling-demo-oom-pod   0/1     OOMKilled           2 (18s ago)   33s
+scheduling-demo-oom-pod   0/1     CrashLoopBackOff    2 (23s ago)   55s
+scheduling-demo-oom-pod   1/1     Running             3 (26s ago)   58s
+scheduling-demo-oom-pod   0/1     OOMKilled           3 (27s ago)   59s
+```
+
+`kubectl describe` shows how the last run ended:
+
+```
+kubectl describe pod scheduling-demo-oom-pod | grep -A5 "Last State"
 ```
 
 ```
     Last State:     Terminated
       Reason:       OOMKilled
       Exit Code:    137
-      Started:      Fri, 28 Aug 2026 15:20:54 +1000
-      Finished:     Fri, 28 Aug 2026 15:20:54 +1000
+      Started:      Thu, 19 Nov 2026 11:32:24 +0000
+      Finished:     Thu, 19 Nov 2026 11:32:24 +0000
     Ready:          False
-    Restart Count:  2
 ```
 
 Exit code 137 means the process was killed by signal 9, `SIGKILL`
@@ -391,20 +453,18 @@ kubectl get priorityclass
 **Expected output**:
 
 ```
-NAME                      VALUE        GLOBAL-DEFAULT   AGE     PREEMPTIONPOLICY
-system-cluster-critical   2000000000   false            2m32s   PreemptLowerPriority
-system-node-critical      2000001000   false            2m32s   PreemptLowerPriority
-
+NAME                      VALUE        GLOBAL-DEFAULT   AGE   PREEMPTIONPOLICY
+system-cluster-critical   2000000000   false            11m   PreemptLowerPriority
+system-node-critical      2000001000   false            11m   PreemptLowerPriority
 priorityclass.scheduling.k8s.io/scheduling-demo-low created
 priorityclass.scheduling.k8s.io/scheduling-demo-high created
 priorityclass.scheduling.k8s.io/scheduling-demo-high-nopreempt created
-
-NAME                             VALUE        GLOBAL-DEFAULT   AGE     PREEMPTIONPOLICY
-scheduling-demo-high             100000       false            0s      PreemptLowerPriority
-scheduling-demo-high-nopreempt   100000       false            0s      Never
-scheduling-demo-low              1000         false            0s      PreemptLowerPriority
-system-cluster-critical          2000000000   false            2m37s   PreemptLowerPriority
-system-node-critical             2000001000   false            2m37s   PreemptLowerPriority
+NAME                             VALUE        GLOBAL-DEFAULT   AGE   PREEMPTIONPOLICY
+scheduling-demo-high             100000       false            0s    PreemptLowerPriority
+scheduling-demo-high-nopreempt   100000       false            0s    Never
+scheduling-demo-low              1000         false            0s    PreemptLowerPriority
+system-cluster-critical          2000000000   false            11m   PreemptLowerPriority
+system-node-critical             2000001000   false            11m   PreemptLowerPriority
 ```
 
 A Pod that names no class, for comparison
@@ -430,60 +490,76 @@ the host's CPUs, so the demo works out its Pod sizes from the node's
 own numbers. Everything below uses `k8s-lab-default-worker`, the node
 used earlier in this chapter.
 
-First, check that nothing but system Pods is running on the worker. The
+First, check what's running on the worker apart from system Pods. The
 scheduler can evict any lower-priority Pod to make room, so a Pod left
 over from an earlier section would also be at risk. The listing leaves
-out Pods that have finished:
+out the `kube-system` namespace and Pods that have finished:
 
 ```
 NODE=k8s-lab-default-worker
 kubectl get pods -A --field-selector spec.nodeName=$NODE,metadata.namespace!=kube-system,status.phase!=Succeeded,status.phase!=Failed
 ```
 
-**Expected output**: nothing. On a fresh cluster, the only Pods on the
-worker are `kindnet` and `kube-proxy`, both in `kube-system`:
+**Expected output**: if you've followed the chapter so far, three Pods
+from earlier sections are still on the worker:
+
+```
+NAMESPACE   NAME                             READY   STATUS      RESTARTS      AGE
+default     scheduling-demo-oom-pod          0/1     OOMKilled   3 (38s ago)   70s
+default     scheduling-demo-qos-pod          1/1     Running     0             70s
+default     scheduling-demo-toleration-pod   1/1     Running     0             89s
+```
+
+Delete every Pod from earlier in this chapter (`--ignore-not-found`
+skips the ones that are already gone), then list again until nothing
+is left. Pods you've just deleted can show as `Terminating` for a
+while:
+
+```
+kubectl delete pod --ignore-not-found scheduling-demo-affinity-pod scheduling-demo-affinity-impossible-pod scheduling-demo-colocate-anchor scheduling-demo-affinity-copod scheduling-demo-antiaffinity-pod scheduling-demo-notoleration-pod scheduling-demo-toleration-pod scheduling-demo-qos-pod scheduling-demo-oom-pod
+kubectl get pods -A --field-selector spec.nodeName=$NODE,metadata.namespace!=kube-system,status.phase!=Succeeded,status.phase!=Failed
+```
 
 ```
 No resources found
 ```
 
-If it lists Pods from earlier sections of this chapter, delete them.
-Pods you've just deleted can still show as `Terminating` for a while;
-list again until nothing is left:
+Pods from other chapters would be at risk too. If the listing shows
+any, delete them, or start from a fresh cluster with `make reset`.
+
+Then work out the sizes. The low-priority "filler" Pod will take 60% of
+the worker's free CPU, and the high-priority Pod will ask for 50%. So
+the high-priority Pod can't fit next to the filler, but fits easily
+once the filler is gone. Look up the worker's allocatable CPU and how
+much is already requested:
 
 ```
-kubectl delete pod --ignore-not-found scheduling-demo-affinity-pod scheduling-demo-affinity-impossible-pod scheduling-demo-colocate-anchor scheduling-demo-affinity-copod scheduling-demo-antiaffinity-pod scheduling-demo-notoleration-pod scheduling-demo-toleration-pod scheduling-demo-qos-pod scheduling-demo-oom-pod
-kubectl delete namespace --ignore-not-found scheduling-demo-governance
+kubectl get node $NODE -o jsonpath='{.status.allocatable.cpu}{"\n"}'
+kubectl describe node $NODE | grep -A6 "^Allocated resources"
 ```
-
-Then work out the sizes. `FREE` is the worker's allocatable CPU minus
-the CPU already requested by Pods on it. The low-priority "filler" Pod
-takes 60% of that, and the high-priority Pod will ask for 50%. So the
-high-priority Pod can't fit next to the filler, but fits easily once
-the filler is gone:
-
-```
-ALLOC=$(kubectl get node $NODE -o go-template='{{.status.allocatable.cpu}}')
-case $ALLOC in *m) ALLOC_M=${ALLOC%m} ;; *) ALLOC_M=$((ALLOC * 1000)) ;; esac
-REQ_M=0
-for c in $(kubectl get pods -A --field-selector spec.nodeName=$NODE,status.phase!=Succeeded,status.phase!=Failed \
-    -o go-template='{{range .items}}{{range .spec.containers}}{{with .resources.requests}}{{with .cpu}}{{.}}{{"\n"}}{{end}}{{end}}{{end}}{{end}}' \
-    | sed -E 's/m$//; t; s/$/000/'); do REQ_M=$((REQ_M + c)); done
-FREE=$((ALLOC_M - REQ_M))
-FILL_CPU=$((FREE * 60 / 100))m
-HIGH_CPU=$((FREE * 50 / 100))m
-echo "allocatable=${ALLOC_M}m requested=${REQ_M}m FREE=${FREE}m FILL_CPU=$FILL_CPU HIGH_CPU=$HIGH_CPU"
-```
-
-The `go-template` lists each container's CPU request, `sed` turns
-`100m` into `100` and a whole `1` into `1000` (millicores), and the
-loop adds them up.
 
 **Expected output**: these numbers come from a machine with 8 CPUs;
 yours will differ:
 
 ```
-allocatable=8000m requested=100m FREE=7900m FILL_CPU=4740m HIGH_CPU=3950m
+8
+Allocated resources:
+  (Total limits may be over 100 percent, i.e., overcommitted.)
+  Resource           Requests   Limits
+  --------           --------   ------
+  cpu                100m (1%)  100m (1%)
+  memory             50Mi (0%)  50Mi (0%)
+  ephemeral-storage  0 (0%)     0 (0%)
+```
+
+CPU is counted in millicores: `8` CPUs is `8000m`. Here the free CPU is
+8000m - 100m = 7900m, so the filler gets 60% of that, 4740m, and the
+high-priority Pod 50%, 3950m. Set them for the commands below, with
+your own numbers:
+
+```
+FILL_CPU=4740m
+HIGH_CPU=3950m
 ```
 
 **Example**: start the low-priority filler,
@@ -493,22 +569,22 @@ your number, so you can't apply the file as it is:
 
 ```
 sed "s/__FILL_CPU__/$FILL_CPU/" tutorial/examples/scheduling/priority-filler-pod.yaml | kubectl apply -f -
-kubectl wait --for=condition=Ready pod/scheduling-demo-priority-filler --timeout=60s
-kubectl get pod scheduling-demo-priority-filler -o wide
 ```
-
-**Expected output**:
 
 ```
 pod/scheduling-demo-priority-filler created
-pod/scheduling-demo-priority-filler condition met
-
-NAME                              READY   STATUS    RESTARTS   AGE   IP           NODE
-scheduling-demo-priority-filler   1/1     Running   0          2s    10.244.2.5   k8s-lab-default-worker
 ```
 
-`kubectl wait` waits until the Pod is ready; without it, the `get`
-might still show `Pending`.
+When it's running:
+
+```
+kubectl get pod scheduling-demo-priority-filler -o wide
+```
+
+```
+NAME                              READY   STATUS    RESTARTS   AGE   IP            NODE                     NOMINATED NODE   READINESS GATES
+scheduling-demo-priority-filler   1/1     Running   0          6s    10.244.2.16   k8s-lab-default-worker   <none>           <none>
+```
 
 First, a high-priority Pod that isn't allowed to preempt.
 [`priority-nopreempt-pod.yaml`](examples/scheduling/priority-nopreempt-pod.yaml)
@@ -525,14 +601,14 @@ kubectl describe pod scheduling-demo-priority-nopreempt | grep -A3 Events:
 and the event says why nothing was preempted:
 
 ```
-NAME                                 READY   STATUS    RESTARTS   AGE   IP           NODE
-scheduling-demo-priority-filler      1/1     Running   0          10s   10.244.2.5   k8s-lab-default-worker
-scheduling-demo-priority-nopreempt   0/1     Pending   0          8s    <none>       <none>
-
+pod/scheduling-demo-priority-nopreempt created
+NAME                                 READY   STATUS    RESTARTS   AGE   IP            NODE                     NOMINATED NODE   READINESS GATES
+scheduling-demo-priority-filler      1/1     Running   0          10s   10.244.2.16   k8s-lab-default-worker   <none>           <none>
+scheduling-demo-priority-nopreempt   0/1     Pending   0          3s    <none>        <none>                   <none>           <none>
 Events:
   Type     Reason            Age   From               Message
   ----     ------            ----  ----               -------
-  Warning  FailedScheduling  8s    default-scheduler  0/3 nodes are available: 1 Insufficient cpu, 1 node(s) didn't match Pod's node affinity/selector, 1 node(s) had untolerated taint(s). no new claims to deallocate, preemption: not eligible due to preemptionPolicy=Never.
+  Warning  FailedScheduling  3s    default-scheduler  0/3 nodes are available: 1 Insufficient cpu, 1 node(s) didn't match Pod's node affinity/selector, 1 node(s) had untolerated taint(s). no new claims to deallocate, preemption: not eligible due to preemptionPolicy=Never.
 ```
 
 Three nodes, three reasons: the worker doesn't have enough CPU, the
@@ -555,19 +631,25 @@ kubectl get pod scheduling-demo-priority-filler -o jsonpath='{range .status.cond
 
 **Expected output**: the new Pod is `Pending`, with `NOMINATED NODE`
 set: the scheduler has picked the worker for it and is waiting for room.
-The filler is being removed. Your first listing may still show it as
-`Running`; a few seconds later it shows `Terminating`. Its
-`DisruptionTarget` condition records why:
+The filler may still show `Running`, but its `DisruptionTarget`
+condition already says it's being removed, and why:
 
 ```
 pod "scheduling-demo-priority-nopreempt" deleted from default namespace
 pod/scheduling-demo-priority-preempt created
-
-NAME                               READY   STATUS        RESTARTS   AGE   IP           NODE                     NOMINATED NODE
-scheduling-demo-priority-filler    1/1     Terminating   0          67s   10.244.2.5   k8s-lab-default-worker   <none>
-scheduling-demo-priority-preempt   0/1     Pending       0          0s    <none>       <none>                   k8s-lab-default-worker
-
+NAME                               READY   STATUS    RESTARTS   AGE   IP            NODE                     NOMINATED NODE           READINESS GATES
+scheduling-demo-priority-filler    1/1     Running   0          15s   10.244.2.16   k8s-lab-default-worker   <none>                   <none>
+scheduling-demo-priority-preempt   0/1     Pending   0          0s    <none>        <none>                   k8s-lab-default-worker   <none>
 PreemptionByScheduler: default-scheduler: preempting to accommodate a higher priority pod
+```
+
+A few seconds later, `kubectl get pods -o wide` shows the filler
+`Terminating`:
+
+```
+NAME                               READY   STATUS        RESTARTS   AGE   IP            NODE                     NOMINATED NODE           READINESS GATES
+scheduling-demo-priority-filler    1/1     Terminating   0          20s   10.244.2.16   k8s-lab-default-worker   <none>                   <none>
+scheduling-demo-priority-preempt   0/1     Pending       0          5s    <none>        <none>                   k8s-lab-default-worker   <none>
 ```
 
 The filler stays `Terminating` for about 30 seconds. Its only process,
@@ -577,8 +659,8 @@ Preemption waits too: the new Pod isn't started until the filler is
 gone. After about 30 seconds, run `kubectl get pods -o wide` again:
 
 ```
-NAME                               READY   STATUS    RESTARTS   AGE   IP           NODE                     NOMINATED NODE
-scheduling-demo-priority-preempt   1/1     Running   0          32s   10.244.2.6   k8s-lab-default-worker   <none>
+NAME                               READY   STATUS    RESTARTS   AGE   IP            NODE                     NOMINATED NODE   READINESS GATES
+scheduling-demo-priority-preempt   1/1     Running   0          35s   10.244.2.17   k8s-lab-default-worker   <none>           <none>
 ```
 
 The filler is gone, and `NOMINATED NODE` is empty again, because the
@@ -595,9 +677,8 @@ kubectl get pod scheduling-demo-priority-preempt -o jsonpath='{.metadata.uid}{"\
 
 ```
 LAST SEEN   TYPE     REASON      OBJECT                                MESSAGE
-48s         Normal   Preempted   pod/scheduling-demo-priority-filler   Preempted by pod b9b7c5bf-1a82-44bf-a548-ae964ef92be8 on node k8s-lab-default-worker
-
-b9b7c5bf-1a82-44bf-a548-ae964ef92be8
+35s         Normal   Preempted   pod/scheduling-demo-priority-filler   Preempted by pod d3714dd3-042f-45a4-ba18-cb420ff15799 on node k8s-lab-default-worker
+d3714dd3-042f-45a4-ba18-cb420ff15799
 ```
 
 The UIDs match. If you've run the demo before, you may also see older
@@ -625,10 +706,9 @@ pod "scheduling-demo-priority-preempt" deleted from default namespace
 priorityclass.scheduling.k8s.io "scheduling-demo-low" deleted
 priorityclass.scheduling.k8s.io "scheduling-demo-high" deleted
 priorityclass.scheduling.k8s.io "scheduling-demo-high-nopreempt" deleted
-
 NAME                      VALUE        GLOBAL-DEFAULT   AGE   PREEMPTIONPOLICY
-system-cluster-critical   2000000000   false            10m   PreemptLowerPriority
-system-node-critical      2000001000   false            10m   PreemptLowerPriority
+system-cluster-critical   2000000000   false            12m   PreemptLowerPriority
+system-node-critical      2000001000   false            12m   PreemptLowerPriority
 ```
 
 ### ResourceQuota: totals for a namespace
@@ -662,28 +742,13 @@ kubectl describe resourcequota scheduling-demo-quota -n scheduling-demo-governan
 ```
 
 **Expected output**: both Pods are rejected and never created, for two
-different reasons:
+different reasons, and the quota shows nothing used:
 
 ```
-$ kubectl apply -f tutorial/examples/scheduling/quota-noresources-pod.yaml
+namespace/scheduling-demo-governance created
+resourcequota/scheduling-demo-quota created
 Error from server (Forbidden): error when creating "tutorial/examples/scheduling/quota-noresources-pod.yaml": pods "scheduling-demo-noresources-pod" is forbidden: failed quota: scheduling-demo-quota: must specify limits.cpu for: nginx; limits.memory for: nginx; requests.cpu for: nginx; requests.memory for: nginx
-```
-
-The first Pod declares no resources, and the error lists exactly which
-ones it must declare. The second declares them all, but asks for too
-much:
-
-```
-$ kubectl apply -f tutorial/examples/scheduling/quota-exceeding-pod.yaml
 Error from server (Forbidden): error when creating "tutorial/examples/scheduling/quota-exceeding-pod.yaml": pods "scheduling-demo-exceeding-pod" is forbidden: exceeded quota: scheduling-demo-quota, requested: limits.memory=600Mi,requests.memory=300Mi, used: limits.memory=0,requests.memory=0, limited: limits.memory=512Mi,requests.memory=256Mi
-```
-
-The error spells out `requested`, `used` and `limited`: this Pod alone
-would have needed 600Mi of `limits.memory`, against a limit of 512Mi.
-Since both Pods were rejected, the quota shows nothing used:
-
-```
-$ kubectl describe resourcequota scheduling-demo-quota -n scheduling-demo-governance
 Name:            scheduling-demo-quota
 Namespace:       scheduling-demo-governance
 Resource         Used  Hard
@@ -694,6 +759,12 @@ pods             0     3
 requests.cpu     0     500m
 requests.memory  0     256Mi
 ```
+
+The first Pod declares no resources, and the error lists exactly which
+ones it must declare. The second declares them all, but asks for too
+much. The error spells out `requested`, `used` and `limited`: this Pod
+alone would have needed 600Mi of `limits.memory`, against a limit of
+512Mi.
 
 **Storage quotas**: a quota can also limit storage.
 `persistentvolumeclaims` limits the number of PVCs, as `pods` limits
@@ -726,9 +797,10 @@ StorageClass waits until a Pod uses a PVC before creating the volume
 `1Gi`:
 
 ```
-NAME                        STATUS    VOLUME   CAPACITY   ACCESS MODES   STORAGECLASS   AGE
-scheduling-demo-quota-pvc   Pending                                      standard       0s
-
+resourcequota/scheduling-demo-storage-quota created
+persistentvolumeclaim/scheduling-demo-quota-pvc created
+NAME                        STATUS    VOLUME   CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE
+scheduling-demo-quota-pvc   Pending                                      standard       <unset>                 0s
 Name:                   scheduling-demo-storage-quota
 Namespace:              scheduling-demo-governance
 Resource                Used  Hard
@@ -738,11 +810,17 @@ requests.storage        1Gi   2Gi
 ```
 
 Now start a Pod that uses the PVC and writes a few bytes to it,
-[`quota-storage-pod.yaml`](examples/scheduling/quota-storage-pod.yaml),
-and compare what's on disk with what the quota shows:
+[`quota-storage-pod.yaml`](examples/scheduling/quota-storage-pod.yaml).
+It declares small CPU and memory requests and limits, because the
+first quota requires every Pod in this namespace to:
 
 ```
 kubectl apply -f tutorial/examples/scheduling/quota-storage-pod.yaml
+```
+
+When it's running, compare what's on disk with what the quota shows:
+
+```
 kubectl exec -n scheduling-demo-governance scheduling-demo-quota-storage-pod -- du -sh /data
 kubectl describe resourcequota scheduling-demo-storage-quota -n scheduling-demo-governance
 ```
@@ -754,7 +832,8 @@ before the PVC was bound:
 
 ```
 8.0K	/data
-
+Name:                   scheduling-demo-storage-quota
+Namespace:              scheduling-demo-governance
 Resource                Used  Hard
 --------                ----  ----
 persistentvolumeclaims  1     2
@@ -789,28 +868,46 @@ kubectl get pod scheduling-demo-noresources-pod -n scheduling-demo-governance -o
 LimitRange's values, although the manifest doesn't mention resources:
 
 ```
-$ kubectl apply -f tutorial/examples/scheduling/limitrange.yaml
 limitrange/scheduling-demo-limits created
-
-$ kubectl apply -f tutorial/examples/scheduling/quota-noresources-pod.yaml
 pod/scheduling-demo-noresources-pod created
-
-$ kubectl get pod scheduling-demo-noresources-pod -n scheduling-demo-governance -o jsonpath='{.spec.containers[0].resources}'
 {"limits":{"cpu":"500m","memory":"256Mi"},"requests":{"cpu":"250m","memory":"128Mi"}}
 ```
 
 The defaults were filled in before the quota was checked, so the Pod
-passed. The quota now counts one Pod, with exactly those amounts:
+passed. Look at the quota again:
 
 ```
-$ kubectl describe resourcequota scheduling-demo-quota -n scheduling-demo-governance
+kubectl describe resourcequota scheduling-demo-quota -n scheduling-demo-governance
+```
+
+**Expected output**: two Pods now count against it: the storage Pod
+(50m and 32Mi requested, 100m and 64Mi limits) and this one, with the
+LimitRange's amounts:
+
+```
 Name:            scheduling-demo-quota
 Namespace:       scheduling-demo-governance
 Resource         Used   Hard
 --------         ----   ----
-limits.cpu       500m   1
-limits.memory    256Mi  512Mi
-pods             1      3
-requests.cpu     250m   500m
-requests.memory  128Mi  256Mi
+limits.cpu       600m   1
+limits.memory    320Mi  512Mi
+pods             2      3
+requests.cpu     300m   500m
+requests.memory  160Mi  256Mi
+```
+
+### Cleaning up
+
+Deleting the namespace deletes everything in it: the quotas, the
+LimitRange, the PVC and both Pods. Then remove the label from the
+worker:
+
+```
+kubectl delete namespace scheduling-demo-governance
+kubectl label node k8s-lab-default-worker scheduling-demo/zone-
+```
+
+```
+namespace "scheduling-demo-governance" deleted
+node/k8s-lab-default-worker unlabeled
 ```
