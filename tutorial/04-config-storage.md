@@ -1,30 +1,38 @@
 # 4. Configuration and storage
 
-None of this chapter means anything without chapter 3's Pods to attach
-it to - a ConfigMap, Secret, or PersistentVolumeClaim is inert on its
-own, the same way a CRD is inert without a controller (chapter 11).
-This chapter covers the two ways a Pod pulls in something that isn't
-baked into its container image: configuration data (ConfigMap, Secret)
-and storage (Volumes, PersistentVolumes/Claims, StorageClass).
+A container image holds a program, but usually not its configuration
+or its data. This chapter covers the two ways a Pod gets what isn't in
+its image:
 
-### ConfigMap: decoupling configuration from the image
+- **Configuration**: ConfigMaps and Secrets.
+- **Storage**: volumes, PersistentVolumes and PersistentVolumeClaims,
+  and StorageClasses.
 
-**Why**: baking configuration into a container image means rebuilding
-the image for every environment or config change. A ConfigMap holds
-key-value data as its own API object, and a Pod pulls values from it at
-start time - two ways: as environment variables (`envFrom`/`env`), or as
-files in a mounted volume. These aren't equivalent for anything beyond a
-single-line value: an env var is one string, full stop, while a mounted
-ConfigMap volume gives you one file per key, updated atomically as a
-whole (kubelet swaps a `..data` symlink rather than editing files in
-place), which matters for any value that isn't guaranteed to be a single
-line.
+None of these objects does anything until a Pod (chapter 3) uses
+it.
 
-**Example**: `tutorial/examples/config-storage/configmap.yaml` defines
-two keys - `greeting` (single line) and `motd` (deliberately
-multi-line). `tutorial/examples/config-storage/configmap-pod.yaml`
-consumes the same ConfigMap both ways at once, so the difference is
-directly comparable:
+### ConfigMap: configuration outside the image
+
+**Why**: if configuration is built into the image, every change, and
+every environment, needs a new image. A **ConfigMap** holds
+configuration as key-value pairs in an API object of its own. A Pod can
+use it in two ways:
+
+- as **environment variables** (`envFrom` or `env`), or
+- as **files**, by mounting the ConfigMap as a volume: one file per
+  key.
+
+For a value longer than one line, the two aren't equivalent. An
+environment variable is a single string, and tools that read the
+environment line by line handle it badly. A mounted file keeps the
+value exactly as it is. When the ConfigMap changes, the kubelet updates
+the mounted files all at once, by switching a `..data` symlink to a new
+directory.
+
+**Example**: [`configmap.yaml`](examples/config-storage/configmap.yaml)
+has two keys: `greeting`, one line, and `motd`, two lines.
+[`configmap-pod.yaml`](examples/config-storage/configmap-pod.yaml) uses
+the ConfigMap both ways at once, so you can compare them:
 
 ```yaml
 # configmap.yaml
@@ -43,27 +51,26 @@ kubectl exec config-storage-demo-cm-pod -- cat /etc/config/motd
 kubectl exec config-storage-demo-cm-pod -- ls /etc/config
 ```
 
-**Expected output**: the env var genuinely carries the multi-line value
-- one variable, with a real embedded newline - which is legal but
-actively misleading for line-based tooling. A naive `grep '^motd='`
-only shows the first line, silently dropping the rest, because `grep`
-matches per line and the continuation line doesn't start with `motd=`
-at all:
+**Expected output**: the `motd` environment variable does contain both
+lines, with a newline in between. But `grep '^motd='` shows only the
+first: `grep` works line by line, and the second line doesn't start
+with `motd=`:
 
 ```
 greeting=Hello from a ConfigMap
 motd=Line one of the message of the day.
 ```
 
-The value is really both lines - confirmed with `grep -A1`:
+With `grep -A1`, which also prints the line after each match, you see
+the second line too:
 
 ```
 motd=Line one of the message of the day.
 Line two of the message of the day.
 ```
 
-The mounted volume has no such ambiguity - one file per key, each with
-clean, real newlines:
+The mounted volume has one file per key, and the file has both
+lines:
 
 ```
 $ kubectl exec config-storage-demo-cm-pod -- cat /etc/config/motd
@@ -75,32 +82,31 @@ greeting
 motd
 ```
 
-If something downstream parses `motd` from the environment expecting
-one line - a log line, a shell variable it then reads on to something
-else - the second line silently vanishes from its view. That's the
-concrete cost of choosing env vars for anything that isn't guaranteed
-single-line.
+A program that reads `motd` from the environment and expects one line,
+a log line or a shell script for example, never sees the second line.
+For any value that might have more than one line, use a mounted
+file.
 
-### Secret: the same mechanism, for values that shouldn't sit in plain files
+### Secret: the same mechanism, for sensitive values
 
-**Why**: a Secret has the exact same shape and consumption model as a
-ConfigMap (env or mounted volume) - the differences are about handling,
-not structure. Kubernetes stores Secret values base64-encoded, which is
-an encoding, not encryption - anyone who can `kubectl get secret -o
-yaml` can trivially decode it, so a Secret's actual security value comes
-from RBAC scoping who can read the object at all (chapter 9), not from
-the encoding itself. `stringData` is a write-only convenience field for
-authoring - you write plaintext, the apiserver base64-encodes it into
-`.data` on write, and reading the object back always shows `.data`, never
-`stringData`. Preferring a mounted volume over an env var matters more
-here than for a ConfigMap: an env var is trivially readable via
-`kubectl exec ... env`, process listings, and can end up in crash dumps
-or child-process environments more easily than a file that requires an
-explicit read.
+**Why**: a **Secret** works like a ConfigMap (environment variables or
+mounted files), but is meant for passwords, keys and tokens. The
+difference is in how it's handled, not how it's built:
 
-**Example**: `tutorial/examples/config-storage/secret.yaml` and
-`tutorial/examples/config-storage/secret-pod.yaml` mount a password as a
-file rather than an env var:
+- Secret values are stored **base64-encoded**. That's an encoding, not
+  encryption: anyone who can read the Secret can decode it. What
+  protects a Secret is RBAC, which controls who can read it (chapter 9).
+- You can write values in plain text under `stringData`. The API server
+  encodes them into `data`, and that's what you see when you read the
+  Secret back.
+- Prefer mounted files to environment variables even more than for a
+  ConfigMap. Environment variables show up in `kubectl exec ... env`
+  and process listings, are passed on to child processes and can end up
+  in crash dumps. A file has to be read on purpose.
+
+**Example**: [`secret.yaml`](examples/config-storage/secret.yaml) holds a
+password, and [`secret-pod.yaml`](examples/config-storage/secret-pod.yaml)
+mounts it as a file:
 
 ```
 kubectl apply -f tutorial/examples/config-storage/secret.yaml
@@ -109,10 +115,10 @@ kubectl apply -f tutorial/examples/config-storage/secret-pod.yaml
 kubectl exec config-storage-demo-secret-pod -- cat /etc/secret/password
 ```
 
-**Expected output**: the object's real storage (`.data`) is base64, and
-`stringData` genuinely isn't stored anywhere as its own field - it only
-shows up, still in plaintext, inside kubectl's own bookkeeping
-annotation:
+**Expected output**: the stored value under `data` is base64. There's no
+`stringData` field; the plain-text value only appears inside the
+`last-applied-configuration` annotation that `kubectl apply` adds (see
+chapter 2):
 
 ```yaml
 apiVersion: v1
@@ -127,34 +133,28 @@ metadata:
 type: Opaque
 ```
 
-`czNjcjN0LWRlbW8tdmFsdWU=` is exactly `s3cr3t-demo-value` base64-decoded
-- trivial to reverse, which is the whole point of "encoding, not
-encryption." The mounted file gives the plaintext back directly, decoded
-by kubelet at mount time, no manual decoding needed by whatever's
-reading it:
+`czNjcjN0LWRlbW8tdmFsdWU=` decodes to `s3cr3t-demo-value`
+(`echo czNjcjN0LWRlbW8tdmFsdWU= | base64 -d`). The kubelet decodes the
+value when it mounts the Secret, so the file in the Pod holds the
+plain text:
 
 ```
 $ kubectl exec config-storage-demo-secret-pod -- cat /etc/secret/password
 s3cr3t-demo-value
 ```
 
-### Volumes: Pod-scoped, ephemeral storage
+### Volumes: storage that lives with the Pod
 
-**Why**: a `Volume` in the Pod spec (as opposed to a PersistentVolume,
-next section) is scoped to the Pod's own lifetime, not any individual
-container's - it starts empty when the Pod is scheduled and is deleted
-for good only when the Pod object itself is. This is the mechanism
-ConfigMap and Secret volume mounts (above) are actually built on, and
-it's also how containers within the same Pod share files with each
-other. The simplest kind, `emptyDir`, is just scratch space with nothing
-backing it beyond the Pod's own lifetime.
+**Why**: a **volume** in a Pod's spec (not to be confused with a
+PersistentVolume, in the next section) belongs to the Pod. It's
+created when the Pod starts, survives container restarts, and is
+deleted with the Pod. Containers in the same Pod can share files
+through one. ConfigMap and Secret mounts are volumes too. The simplest
+kind is `emptyDir`: an empty directory, for scratch space.
 
-**Example**: `tutorial/examples/config-storage/emptydir-pod.yaml` mounts
-an `emptyDir` and just sleeps - nothing is written on start, so writing
-happens via `kubectl exec` instead. That way a fresh Pod's volume being
-genuinely empty is directly observable, rather than immediately
-overwritten by a start command that would run again on every new Pod
-regardless of whether the volume was actually fresh:
+**Example**: [`emptydir-pod.yaml`](examples/config-storage/emptydir-pod.yaml)
+mounts an `emptyDir` at `/scratch` and does nothing else. Write a file
+into it, delete the Pod, create it again, and look for the file:
 
 ```
 kubectl apply -f tutorial/examples/config-storage/emptydir-pod.yaml
@@ -165,9 +165,8 @@ kubectl apply -f tutorial/examples/config-storage/emptydir-pod.yaml
 kubectl exec config-storage-demo-emptydir-pod -- cat /scratch/note.txt
 ```
 
-**Expected output**: the write succeeds and reads back fine - right up
-until the Pod object is deleted and recreated, at which point the new
-Pod's volume is a genuinely different, empty one:
+**Expected output**: the file is there until the Pod is deleted. The
+new Pod gets a new, empty volume:
 
 ```
 $ kubectl exec config-storage-demo-emptydir-pod -- cat /scratch/note.txt
@@ -184,50 +183,42 @@ cat: can't open '/scratch/note.txt': No such file or directory
 command terminated with exit code 1
 ```
 
-One real aside worth knowing, hit while verifying this: `kubectl delete
-pod` on this example took the full default 30s termination grace period
-to actually complete, rather than returning quickly. That's because this
-container's process (a plain `sh -c "sleep 3600"`) never registers a
-`SIGTERM` handler, and an unhandled `SIGTERM` sent to the process acting
-as PID 1 of a container's PID namespace is ignored by the kernel rather
-than taking its normal "terminate" default - kubelet has to wait out the
-full grace period and send `SIGKILL` before the container actually
-stops. A real application image that does its own signal handling
-(nginx, for instance - chapter 3's crash demo used it precisely because
-it *does* shut down cleanly on `SIGTERM`) doesn't hit this; a bare
-shell script wrapped in `sh -c` is a common way to accidentally hit it.
+You may notice that `kubectl delete pod` takes about 30 seconds here.
+The container's only process, `sleep`, started by `sh -c`, runs as
+PID 1 and doesn't handle `SIGTERM`, the signal asking it to stop. The
+kernel ignores unhandled signals for PID 1, so the kubelet waits out the
+30-second grace period and then sends `SIGKILL`. Programs that handle
+`SIGTERM`, such as nginx, stop straight away.
 
 ### PersistentVolume and PersistentVolumeClaim: static binding
 
-**Why**: a `Volume` disappears with its Pod - real persistent storage
-needs to outlive any one Pod, and potentially be shared across nodes,
-which is what PersistentVolume (PV) and PersistentVolumeClaim (PVC)
-exist for. A PV represents an actual piece of storage, whatever's
-actually backing it (a directory on a node's disk, a real NFS export,
-a cloud disk); a PVC is a Pod-facing *request* for storage matching some
-criteria, which the control plane binds to a matching PV. **Static
-binding** means a human created the PV by hand
-ahead of time, as opposed to a StorageClass provisioning one on demand
-(next section). The detail that actually controls which path you get:
-`storageClassName` on the PVC. Merely *omitting* the field is not the
-same as setting it to an explicit empty string - the `DefaultStorageClass`
-admission controller (apiserver logic that intercepts a request after
-auth and before it's persisted, and can mutate or reject it; chapter 9
-covers this stage properly) injects the cluster's default-annotated
-StorageClass onto any PVC where the field is simply absent, silently
-routing you into dynamic provisioning even when a static PV already
-exists for you to bind to instead.
+**Why**: data that has to outlive a Pod needs storage that exists
+independently of it. That's two objects:
 
-**Example**: the binding mechanics are the same regardless of what's
-actually backing the storage, so start with the simplest possible
-backend - a directory on a node's own filesystem - before bringing in a
-real network filesystem. `tutorial/examples/config-storage/hostpath-pv.yaml`
-uses a `hostPath` volume, pinned via `nodeAffinity` (`matchExpressions`
-here; chapter 7 covers node affinity as a Pod-placement mechanism in its
-own right) to one specific node (a `hostPath` directory only exists on
-the one node it names, unlike NFS below), and
-`tutorial/examples/config-storage/hostpath-pvc.yaml` again
-sets `storageClassName: ""` explicitly:
+- A **PersistentVolume** (PV) is a piece of storage: a directory on a
+  node, an NFS share, a cloud disk.
+- A **PersistentVolumeClaim** (PVC) is a request for storage, with a
+  size and an access mode. Kubernetes binds it to a PV that matches.
+  Pods refer to the PVC, not the PV.
+
+With **static** provisioning, an administrator creates the PVs in
+advance. With **dynamic** provisioning (next section), a StorageClass
+creates a PV for each PVC as needed.
+
+A PVC's `storageClassName` decides which you get, and leaving it out
+is not the same as setting it to `""`. `""` means "no StorageClass":
+bind to an existing PV. If the field is missing, an admission plugin
+called `DefaultStorageClass` fills in the cluster's default
+StorageClass (admission plugins check or change requests before they're
+stored; chapter 9 covers them). Then the PVC gets a new, dynamically
+provisioned volume, even if a suitable PV already exists.
+
+**Example**: start with the simplest kind of storage, a directory on a
+node. [`hostpath-pv.yaml`](examples/config-storage/hostpath-pv.yaml)
+uses a `hostPath` volume. Such a directory only exists on one node, so
+the PV says which, with a `nodeAffinity` rule (chapter 7 covers node
+affinity). [`hostpath-pvc.yaml`](examples/config-storage/hostpath-pvc.yaml)
+sets `storageClassName: ""`:
 
 ```
 kubectl apply -f tutorial/examples/config-storage/hostpath-pv.yaml
@@ -238,8 +229,8 @@ kubectl apply -f tutorial/examples/config-storage/hostpath-pod.yaml
 kubectl exec config-storage-demo-hostpath-pod -- sh -c "echo written-by-pod > /mnt/hostpath/from-pod.txt; cat /mnt/hostpath/from-pod.txt"
 ```
 
-**Expected output**: the PVC binds directly to the named PV, no
-provisioner involved:
+**Expected output**: the PVC is bound to the PV, with no provisioner
+involved:
 
 ```
 persistentvolume/config-storage-demo-hostpath-pv created
@@ -249,32 +240,27 @@ NAME                               STATUS   VOLUME                            CA
 config-storage-demo-hostpath-pvc   Bound    config-storage-demo-hostpath-pv   1Gi        RWO                           1s
 ```
 
-And the write actually lands on the node's real filesystem, not just
-inside the container - confirmed by reading the same path back on the
-node itself (`docker exec k8s-lab-default-worker cat
-/tmp/config-storage-demo-hostpath/from-pod.txt`) and finding the exact
-file the Pod wrote:
+The file the Pod wrote is on the node's own filesystem. You can read it
+there with `docker exec k8s-lab-default-worker cat
+/tmp/config-storage-demo-hostpath/from-pod.txt`:
 
 ```
 $ kubectl exec config-storage-demo-hostpath-pod -- sh -c "echo written-by-pod > /mnt/hostpath/from-pod.txt; cat /mnt/hostpath/from-pod.txt"
 written-by-pod
 ```
 
-Same binding mechanics, no server to stand up - the only difference from
-what follows is where the bytes actually live: one node's local disk
-instead of a real shared export, which is also why the PV needed
-`nodeAffinity` here and doesn't for NFS below.
+The data is on one node's disk. That's why the PV needs `nodeAffinity`,
+and why the NFS PV below doesn't.
 
-Now the same PV/PVC binding against real shared storage: this repo's
-`lab-helpers/nfs-server/` runs a real NFS server on the `kind` Docker
-network specifically for this (`make nfs-up`, `make nfs-client-install
-PROFILE=default` first - see
-[lab-helpers/nfs-server/README.md](../lab-helpers/nfs-server/README.md)
-for the `fsid=0` mount-path gotcha this PV's `nfs.path: /` already
-accounts for).
-`tutorial/examples/config-storage/nfs-pv.yaml` and
-`tutorial/examples/config-storage/nfs-pvc.yaml` both set
-`storageClassName: ""` explicitly:
+Now the same thing with shared storage. This repo's
+`lab-helpers/nfs-server/` runs an NFS server on the `kind` Docker
+network. Start it, and install the NFS client on the nodes, with
+`make nfs-up` and `make nfs-client-install PROFILE=default` (see
+[lab-helpers/nfs-server/README.md](../lab-helpers/nfs-server/README.md),
+which also explains why the PV uses `nfs.path: /`).
+[`nfs-pv.yaml`](examples/config-storage/nfs-pv.yaml) and
+[`nfs-pvc.yaml`](examples/config-storage/nfs-pvc.yaml) both set
+`storageClassName: ""`:
 
 ```
 kubectl apply -f tutorial/examples/config-storage/nfs-pv.yaml
@@ -285,8 +271,8 @@ kubectl apply -f tutorial/examples/config-storage/nfs-pod.yaml
 kubectl exec config-storage-demo-nfs-pod -- sh -c "echo written-by-pod > /mnt/nfs/from-pod.txt; ls -la /mnt/nfs"
 ```
 
-**Expected output**: the PVC binds directly to the named PV - no
-dynamic provisioning involved, `VOLUME` names it explicitly:
+**Expected output**: the PVC is bound to the named PV, shown under
+`VOLUME`:
 
 ```
 persistentvolume/config-storage-demo-nfs-pv created
@@ -299,11 +285,9 @@ NAME                          STATUS   VOLUME                       CAPACITY   A
 config-storage-demo-nfs-pvc   Bound    config-storage-demo-nfs-pv   1Gi        RWX                           4s
 ```
 
-The Pod mounts it and writes to the real share immediately - no
-`ContainerCreating` stall, and the pre-existing `hello.txt` from
-`lab-helpers/nfs-server/`'s seeded `data/` directory is right there
-alongside the new file, proof this is genuinely the same NFS export the
-lab helper documents, not a lookalike:
+The Pod mounts the share and writes to it. `hello.txt` was already
+there: it's in `lab-helpers/nfs-server/data/`, the directory the NFS
+server shares:
 
 ```
 pod/config-storage-demo-nfs-pod created
@@ -315,14 +299,14 @@ drwxr-xr-x    3 root     root          4096 Aug 28 04:31 ..
 -rw-r--r--    1 1000     985              9 Aug 21 02:08 hello.txt
 ```
 
-Now the failure mode the "Why" above described - apply
-`tutorial/examples/config-storage/pvc-omitted-storageclassname.yaml`,
-which requests `ReadWriteOnce` storage but never sets
-`storageClassName` at all. A Pod referencing it
-(`pvc-omitted-storageclassname-pod.yaml`) has to be applied too, not
-just the PVC on its own - kind's default StorageClass uses
-`volumeBindingMode: WaitForFirstConsumer`, meaning nothing gets
-provisioned until something actually tries to consume the claim:
+Now what happens when `storageClassName` is left out.
+[`pvc-omitted-storageclassname.yaml`](examples/config-storage/pvc-omitted-storageclassname.yaml)
+asks for `ReadWriteOnce` storage and doesn't mention a StorageClass.
+The PVC needs a Pod that uses it,
+[`pvc-omitted-storageclassname-pod.yaml`](examples/config-storage/pvc-omitted-storageclassname-pod.yaml):
+kind's default StorageClass uses `volumeBindingMode:
+WaitForFirstConsumer`, so it doesn't create a volume until a Pod needs
+one:
 
 ```
 kubectl apply -f tutorial/examples/config-storage/pvc-omitted-storageclassname.yaml
@@ -330,9 +314,9 @@ kubectl apply -f tutorial/examples/config-storage/pvc-omitted-storageclassname-p
 kubectl get pvc config-storage-demo-omitted-scn-pvc
 ```
 
-**Expected output**: bound, with a real dynamically-provisioned PV
-(`pvc-<uid>`) and `STORAGECLASS: standard` - despite the source file
-never mentioning a StorageClass at all:
+**Expected output**: the PVC is bound to a new PV named `pvc-<uid>`, and
+`STORAGECLASS` is `standard`, although the file never mentions a
+StorageClass:
 
 ```
 persistentvolumeclaim/config-storage-demo-omitted-scn-pvc created
@@ -342,30 +326,24 @@ NAME                                   STATUS   VOLUME                          
 config-storage-demo-omitted-scn-pvc   Bound    pvc-a7c865a6-418c-424d-8c64-7f02069faecb   1Gi        RWO            standard       7s
 ```
 
-Compare that `STORAGECLASS` column against the NFS example above, which
-showed a blank `STORAGECLASS` column and a `VOLUME` naming the exact PV
-by name - that blank/named-PV vs. `standard`/generated-PV-name contrast
-*is* the observable difference between an explicit empty string and an
-omitted field, not something you have to take on faith.
+Compare that with the NFS PVC: there, `STORAGECLASS` was empty and
+`VOLUME` was the PV you created. That's the difference between `""`
+and leaving the field out.
 
 ### StorageClass and dynamic provisioning
 
-**Why**: hand-writing a PV for every PVC doesn't scale - a StorageClass
-lets a PVC request storage from a *provisioner* instead, which creates a
-matching PV on demand. kind ships a default StorageClass, `standard`,
-backed by `rancher.io/local-path` (see this repo's
-[DESIGN.md](../DESIGN.md), "Storage" section) - a real dynamic
-provisioner, but a deliberately minimal one: each volume is a directory
-on whichever single node's filesystem the consuming Pod happens to land
-on, with no replication. That constraint isn't just a performance
-tradeoff - `local-path-provisioner` hard-rejects any access mode other
-than `ReadWriteOnce` at the API level.
+**Why**: writing a PV by hand for every PVC doesn't scale. A
+**StorageClass** names a **provisioner**, a program that creates a PV
+whenever a PVC asks for that class. kind comes with one StorageClass,
+`standard`, which is the default. Its provisioner,
+`rancher.io/local-path`, creates each volume as a directory on the node
+where the Pod runs, with no replication (see [DESIGN.md](../DESIGN.md),
+"Storage"). Because of that, it only supports `ReadWriteOnce` (one node
+at a time) and refuses any other access mode.
 
-**Example**: request `ReadWriteMany` from the default StorageClass via
-`tutorial/examples/config-storage/pvc-rwx-standard.yaml` (no
-`storageClassName` override - it uses the default), with a consuming Pod
-again required to trigger anything at all under
-`WaitForFirstConsumer`:
+**Example**: [`pvc-rwx-standard.yaml`](examples/config-storage/pvc-rwx-standard.yaml)
+asks the default StorageClass for `ReadWriteMany` (many nodes at once).
+Again, a Pod has to use the PVC before anything happens:
 
 ```
 kubectl apply -f tutorial/examples/config-storage/pvc-rwx-standard.yaml
@@ -374,12 +352,9 @@ kubectl get pvc config-storage-demo-rwx-pvc
 kubectl describe pvc config-storage-demo-rwx-pvc
 ```
 
-**Expected output**: the PVC sits `Pending` - but *why* it's Pending
-depends entirely on whether a Pod ever consumed it, which is worth
-seeing both ways rather than assuming. Applying the PVC **alone**
-produces no useful signal at all - just the generic
-`WaitForFirstConsumer` message, forever, since nothing has triggered
-provisioning yet:
+**Expected output**: the PVC stays `Pending`. If you look at it before
+any Pod uses it, all you see is the usual `WaitForFirstConsumer`
+message, which never changes:
 
 ```
 NAME                          STATUS    STORAGECLASS   AGE
@@ -391,8 +366,8 @@ Events:
   Normal  WaitForFirstConsumer  20s  persistentvolume-controller   waiting for first consumer to be created before binding
 ```
 
-Once the consuming Pod is applied too, the provisioner actually attempts
-the volume and a real, genuinely informative error appears:
+Once a Pod uses it, the provisioner tries to create the volume, and
+the events show why it can't:
 
 ```
 Events:
@@ -404,10 +379,8 @@ Events:
   Warning  ProvisioningFailed    5s   rancher.io/local-path_local-path-provisioner-855c7b7774-pkjfx_...      failed to provision volume with StorageClass "standard": NodePath only supports ReadWriteOnce and ReadWriteOncePod (1.22+) access modes
 ```
 
-The Pod itself stays `Pending` too, with no events of its own - all the
-useful information is on the PVC, not the Pod trying to use it. The
-practical lesson: an unconsumed `WaitForFirstConsumer` PVC and a
-genuinely rejected one look identical (`Pending`, generic message) until
-something actually tries to schedule against them - if a PVC seems
-stuck for no reason, checking whether anything currently references it
-is as important as checking the PVC's own events.
+The Pod stays `Pending` as well, with no events of its own: the
+explanation is on the PVC. So a PVC that's waiting for a Pod and a PVC
+that can't be provisioned look the same until a Pod uses them. When a
+PVC seems stuck, check whether any Pod uses it, as well as its
+events.
