@@ -201,9 +201,13 @@ kubectl get events -n NS --field-selector type=Warning
 kubectl top nodes                       # needs metrics-server
 kubectl top pods -A --sort-by=memory
 
-# Throwaway debug pod
+# Throwaway debug pod: an interactive shell, deleted when you exit
 kubectl run tmp --rm -it --image=busybox --restart=Never -- sh
-kubectl run tmp --rm -it --image=curlimages/curl --restart=Never -- curl -s http://web
+# For one-off commands, keep a client Pod running and exec into it. `run --rm -it -- <cmd>`
+# with a command that exits at once races the attach: "couldn't attach" warnings, sometimes output twice
+kubectl run tmpcurl --image=curlimages/curl --restart=Never --command -- sleep 3600
+kubectl exec tmpcurl -- curl -s http://web
+kubectl delete pod tmpcurl --now
 kubectl debug -it POD --image=busybox --target=CONTAINER   # ephemeral container in a live pod
 ```
 
@@ -246,8 +250,11 @@ kubectl get ing                                    # ingresses
 kubectl describe ing NAME
 kubectl get networkpolicy
 
-# DNS check from inside the cluster
-kubectl run tmp --rm -it --image=busybox --restart=Never -- nslookup web.default.svc.cluster.local
+# DNS check from inside the cluster (client Pod as in "Inspecting and debugging"; full name, since busybox
+# nslookup on a short name prints NXDOMAIN for each search domain and exits 1)
+kubectl run tmp --image=busybox --restart=Never --command -- sleep 3600
+kubectl exec tmp -- nslookup web.default.svc.cluster.local
+kubectl delete pod tmp --now
 ```
 
 Service DNS: `<svc>.<namespace>.svc.cluster.local` (just `<svc>` works inside the same namespace).

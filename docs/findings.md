@@ -210,6 +210,11 @@ kubectl config view --raw -o jsonpath='{.users[0].user.client-certificate-data}'
 subject=O=kubeadm:cluster-admins, CN=kubernetes-admin
 ```
 
+(Update 2026-11-20: add `--minify` before `-o`. Without it,
+`users[0]` is the first user in the whole kubeconfig, which is another
+cluster's admin when the kubeconfig has several; chapter 9 now uses
+`--minify`.)
+
 Not `system:masters`. `kubectl get clusterrolebinding` shows both
 groups actually exist on this cluster (kubeadm/Kubernetes v1.36.1)
 side by side: the old hardcoded `cluster-admin` -> `system:masters`
