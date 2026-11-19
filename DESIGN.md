@@ -360,7 +360,7 @@ concept.
 CDI and cluster creation live under `lab-helpers/`, linked from the chapter
 in one line; the body shows only steps that transfer to a real cluster.
 
-**Out-of-scope GPU topics get one pointers paragraph, at the end of chapter
+**Out-of-scope GPU topics get one short list of pointers, at the end of chapter
 18 only:** GPU Operator, MIG, DRA, MPS, Kueue and monitoring.
 
 **Chapter order follows concept dependency, not an exam's domain list or
@@ -382,6 +382,28 @@ output/errors, in that order.** The failure mode this avoids: leading
 with YAML trains a reader to pattern-match manifests without
 understanding what problem the fields solve, which is exactly the
 exam-prep checklist style this tutorial is deliberately not.
+
+**Chapters are written for a reader at a terminal, not for a test
+harness.** The GPU chapters (15-18) were first written so a script could
+re-run them and check every output line, and they were unreadable for it.
+Rewritten in November 2026 to these rules:
+
+- Show only commands a reader would type to do or check the step (`get`,
+  `describe`, `logs`, `rollout status`). Commands that exist only to make
+  a run scriptable (`kubectl wait` on a jsonpath, `until` loops) stay out
+  of the chapter. Say "a few seconds later" or "when it's running"
+  instead.
+- Show each command once, with its output directly below. If the output
+  only appears after a delay, put the command in its own block after the
+  sentence that says so.
+- Explain a concept in plain words before or where it is first needed.
+  Don't just name it and point to another chapter.
+- Start with the topic, not with notes about the chapter. Versions go in
+  one "Tested with" line at the end, and out-of-scope topics in a line or
+  a short list there too. No "(observed)" tags, and no notes on how the
+  output was captured.
+- Keep the user's workstation out of the text: replace GPU models, UUIDs,
+  hostnames and home paths in captured output with placeholders.
 
 **Version-current framing.** Every chapter states what's true for the
 Kubernetes version this repo's `kind` profiles currently pin (see "Node
