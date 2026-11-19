@@ -370,7 +370,7 @@ Notes:
 
 ## GPU
 
-Verified against (2026-11-10): kind v0.33.0, `kindest/node:v1.36.1`, kubectl client v1.37.1, helm v4.3.0; the `gpu-fake` profile, and a `gpu-real` cluster built with [nvkind](https://github.com/NVIDIA/nvkind) (commit `c57050497cff`) with chart `nvdp/nvidia-device-plugin` 0.20.1 (device plugin v0.20.1), `nvidia-container-toolkit` 1.20.2, NVIDIA driver 615.78.08 and one NVIDIA GeForce GTX 1650. The `-L` label view, the taint view and `taint`, the stored-resources `get pod`, `patch node` and the two kube-apiserver commands ran on `gpu-fake` only; the rest ran on `gpu-real`.
+Verified against (2026-11-10): kind v0.33.0, `kindest/node:v1.36.1`, kubectl client v1.37.1, helm v4.3.0; the `gpu-fake` profile, and a `gpu-real` cluster built with [nvkind](https://github.com/NVIDIA/nvkind) (commit `c57050497cff`) with chart `nvdp/nvidia-device-plugin` 0.20.1 (device plugin v0.20.1), `nvidia-container-toolkit` 1.20.2, NVIDIA driver 615.78.08 and one NVIDIA GPU. The `-L` label view, the taint view and `taint`, the stored-resources `get pod`, `patch node` and the two kube-apiserver commands ran on `gpu-fake` only; the rest ran on `gpu-real`.
 
 `nvidia.com/gpu` is an extended resource: a whole-number count on the Node, set under `limits`. Tutorial chapters [15](../tutorial/15-fake-gpu-nodes.md) to [18](../tutorial/18-gpu-sharing-and-quota.md) explain each step.
 
