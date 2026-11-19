@@ -1,5 +1,6 @@
 # Chapter 18 (failRequestsGreaterThanOne): the same config as
 # gpu-share-values.yaml, plus failRequestsGreaterThanOne: true.
+runtimeClassName: nvidia
 config:
   map:
     default: |-
