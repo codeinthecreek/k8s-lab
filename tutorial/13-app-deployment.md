@@ -22,9 +22,8 @@ steps stay the focus. It's a single Python file that uses only the
 standard library (`http.server`), so there are no dependencies to
 install.
 
-**Example**: the first version of `app.py`. (The
-[file in the repo](examples/app-deployment/app/app.py) is the later v2,
-from the rolling-update section at the end of this chapter.)
+**Example**: [`app.py`](examples/app-deployment/app/app.py), the
+version you start with. You'll change it twice in this chapter:
 
 ```python
 import http.server
@@ -60,8 +59,12 @@ EXPOSE 8080
 CMD ["python3", "/app.py"]
 ```
 
+Build it and try it with Docker. Like every command in this tutorial,
+this runs from the repo root; the last argument of `docker build` is the
+directory that holds the Dockerfile:
+
 ```
-docker build -t app-deployment-demo:v1 .
+docker build -t app-deployment-demo:v1 tutorial/examples/app-deployment/app
 docker run --rm -d --name app-deployment-demo-smoketest -p 18080:8080 -e GREETING=hi app-deployment-demo:v1
 curl -sS localhost:18080
 docker rm -f app-deployment-demo-smoketest
@@ -201,12 +204,23 @@ Normal  Pulling  5s  kubelet  Pulling image "localhost:5001/app-deployment-demo:
 Normal  Pulled   3s  kubelet  Successfully pulled image "localhost:5001/app-deployment-demo:v1" in 2.225s
 ```
 
-Now edit `app.py` to add `(updated!)` to the response, rebuild, tag it
-`v1` again and push. The registry now has a different image (a new
-digest) under the same tag:
+If `registry-smoketest` from the previous section ran on
+`k8s-lab-default-worker` too, that node already has the image, and you'll
+see `already present on machine` here instead of a pull. Either way, the
+node now has `v1`.
+
+Now edit `app.py` so the response ends with `(updated!)`: change the
+`body = ...` line to
+
+```python
+        body = f"{GREETING} from app-deployment-demo {CODE_VERSION} (updated!)\n"
+```
+
+Then rebuild, tag it `v1` again and push. The registry now has a
+different image (a new digest) under the same tag:
 
 ```
-docker build -t app-deployment-demo:v1 .
+docker build -t app-deployment-demo:v1 tutorial/examples/app-deployment/app
 docker tag app-deployment-demo:v1 localhost:5001/app-deployment-demo:v1
 docker push localhost:5001/app-deployment-demo:v1
 ```
@@ -248,6 +262,29 @@ situations.
 
 The real fix is to give every build a new tag, which is what the
 rolling-update section below does.
+
+Before going on, undo the `(updated!)` edit and push the original `v1`
+again, so the registry holds the code the rest of the chapter expects.
+Then delete this section's demo Pods:
+
+```
+git checkout -- tutorial/examples/app-deployment/app/app.py
+docker build -t app-deployment-demo:v1 tutorial/examples/app-deployment/app
+docker tag app-deployment-demo:v1 localhost:5001/app-deployment-demo:v1
+docker push localhost:5001/app-deployment-demo:v1
+kubectl delete pod registry-smoketest pullpolicy-always-demo pullpolicy-ifnotpresent-demo
+```
+
+```
+v1: digest: sha256:e6d5b562d2fa242d98e1fff13d484fbc3d19aa9831389f5bc8ab6fa14e96db93 size: 1366
+pod "registry-smoketest" deleted from default namespace
+pod "pullpolicy-always-demo" deleted from default namespace
+pod "pullpolicy-ifnotpresent-demo" deleted from default namespace
+```
+
+(The `docker build` output is left out; `git checkout` prints nothing.)
+The digest is the same as the first `v1` push: the same source builds
+the same image.
 
 ### Deployment, Service, Ingress, ConfigMap: tying it together
 
@@ -380,8 +417,11 @@ in practice: by changing source code. As in chapter 3, the checked-in
 image`, pointing the Deployment at a newly built image with a new
 tag.
 
-**Example**: change the code, not just the version string. The response
-now also includes the hostname of the Pod that served it:
+**Example**: change the code, not just the version string. Edit
+`app.py` as below, so the response also includes the hostname of the
+Pod that served it. If the edit goes wrong,
+[`reference/app-v2.py`](examples/app-deployment/reference/app-v2.py) is
+the finished v2; copy it over `app/app.py`.
 
 ```diff
 --- app.py (v1)
@@ -410,7 +450,7 @@ problem from earlier. Then record a change cause and start the rollout,
 as in chapter 3:
 
 ```
-docker build -t app-deployment-demo:v2 .
+docker build -t app-deployment-demo:v2 tutorial/examples/app-deployment/app
 docker tag app-deployment-demo:v2 localhost:5001/app-deployment-demo:v2
 docker push localhost:5001/app-deployment-demo:v2
 kubectl annotate deployment app-deployment-demo kubernetes.io/change-cause="bump app image to v2 (adds pod hostname to response)" --overwrite
@@ -497,3 +537,10 @@ CONTAINER ID   IMAGE     COMMAND   CREATED   STATUS    PORTS     NAMES
 `make down PROFILE=default` (or your profile) deletes the cluster as
 usual. Without `make registry-down`, the registry would keep running on
 your host.
+
+Your `app.py` still has the v2 change. To run the chapter again from the
+start, put back the v1 version:
+
+```
+git checkout -- tutorial/examples/app-deployment/app/app.py
+```
