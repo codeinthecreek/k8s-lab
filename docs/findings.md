@@ -83,6 +83,13 @@ values are replaced by what that command passes when `-f` or `--set` is
 given without a reuse flag, not on every upgrade; repeating the value with
 `--set` kept it (a value carried in the `-f` file instead was not tested).
 
+**Update 2026-11-19:** a value carried in the `-f` file is kept too.
+With `runtimeClassName: nvidia` added to chapter 18's values files, a
+plain `helm upgrade ... -f <file>` (no `--set`) left the DaemonSet's
+`runtimeClassName` as `nvidia` on `gpu-real`, for both of the chapter's
+upgrades. Chapter 18 now uses that form instead of repeating `--set`, so
+the mentions above of the shape chapter 18 uses are out of date.
+
 ## 2026-11-09 - A ResourceQuota on `limits.nvidia.com/gpu` or on `nvidia.com/gpu` is accepted and never counts anything
 
 The Kubernetes docs say that for extended resources only quota items with
