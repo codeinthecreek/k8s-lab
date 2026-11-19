@@ -1,35 +1,38 @@
 # 9. Security
 
-Every `kubectl` command and every in-cluster request this tutorial has
-run so far went through the same three independent checks: who is this
-(authentication - bearer tokens are one mechanism, not the only one),
-are they allowed to do this specific thing (authorization), and does
-this specific request get accepted as-is or modified/rejected
-(admission control) - each stage entirely independent of the others, so
-success at one says nothing about the next. This chapter covers
-identity (ServiceAccounts and x509 client certificates), the
-authorization layer (RBAC, namespaced and cluster-scoped), the
-admission layer (Pod Security Admission and the admission-plugin flags
-behind it), and NetworkPolicy - which depends on chapter 5's networking
-model and needs its own CNI-enforcement caveat front and center.
+Every request to the API server, from `kubectl` or from inside the
+cluster, passes three checks in turn:
+
+1. **Authentication**: who is making the request?
+2. **Authorization**: is that identity allowed to do this?
+3. **Admission control**: is this particular request acceptable as it
+   stands, or should it be changed or rejected?
+
+The three are independent. Passing one says nothing about the next. This
+chapter takes them in order, starting with identities (ServiceAccounts,
+then client certificates), then authorization with RBAC, then admission
+with Pod Security Admission. It ends with NetworkPolicy, which isn't
+part of the API's checks at all: it controls traffic between Pods, and
+depends on the networking from chapter 5.
 
 ### ServiceAccounts: identity for talking to the API
 
-**Why**: every Pod runs as some identity when it talks to the API server
-- by default, the `default` ServiceAccount in its namespace, used
-implicitly and invisibly in every earlier chapter's Pods. Since
-**1.24**, a ServiceAccount no longer gets an auto-generated long-lived
-token Secret the moment it's created - `kubectl create token
-<sa-name>` mints a short-lived JWT (JSON Web Token) on demand (default
-~1h TTL) via the
-TokenRequest API instead. Material written assuming "just `kubectl get
-secret` to find the SA's token" predates this and no longer works that
-way.
+**Why**: a program running in a Pod that talks to the API server needs
+an identity, just as you do. That identity is a **ServiceAccount**. Every
+namespace has one called `default`, and every Pod in earlier chapters
+used it without you noticing.
 
-**Example**: create a ServiceAccount, mint a token for it, and use that
-token directly against the API server - the same "kubectl is just an
-HTTPS client" fact chapter 2's `-v=8` tracing made visible, now proven
-by using `curl` instead of `kubectl` with a non-`kubectl` identity:
+A ServiceAccount proves who it is with a token. Since Kubernetes
+**1.24**, creating a ServiceAccount no longer creates a long-lived token
+stored in a Secret. Instead, `kubectl create token <name>` asks the API
+server for a short-lived token (a JWT, JSON Web Token, valid for about
+an hour by default). Older material that says to find a ServiceAccount's
+token with `kubectl get secret` describes the behaviour before 1.24.
+
+**Example**: create a ServiceAccount, get a token for it, and use the
+token with `curl` instead of `kubectl`. Chapter 2 showed with `-v=8` that
+`kubectl` is just an HTTPS client of the API server; here a different
+client, with a different identity, makes the same kind of request:
 
 ```
 kubectl apply -f tutorial/examples/security/serviceaccount.yaml
@@ -39,49 +42,52 @@ APISERVER=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.serv
 curl -sS -k -H "Authorization: Bearer $TOKEN" "$APISERVER/api/v1/namespaces/default/pods" -o /dev/null -w '%{http_code}\n'
 ```
 
-**Expected output**: no matching Secret at all - `kubectl get secrets |
-grep` returns nothing - and the minted JWT is real enough to
-authenticate against the API server directly, no `kubectl` credentials
-involved:
+**Expected output**: there's no Secret for the ServiceAccount (there are
+no Secrets in `default` at all, so `kubectl` says so), and the API
+server accepts the token:
 
 ```
 serviceaccount/security-demo-sa created
-(no secrets matched - expected since 1.24)
+No resources found in default namespace.
 403
 ```
 
-`403`, not `401` - the token is genuinely valid (authentication
-succeeded), it just has no permissions yet (authorization hasn't granted
-any). That distinction is the entire point of the next subsection.
+The answer is `403 Forbidden`, not `401 Unauthorized`. A `401` would mean
+the API server didn't know who was asking. A `403` means it did: the
+token worked, so authentication succeeded. The ServiceAccount just
+isn't allowed to list Pods yet, because nothing has given it any
+permissions. That's authorization, the next section.
 
-### RBAC: authorization is purely additive
+### RBAC: what an identity may do
 
-**Why**: RBAC grants permissions - there is no explicit "deny" rule.
-Effective permissions for any identity are the union of every
-Role/ClusterRole bound to it; if nothing grants a permission, it's
-denied by default, but nothing can override a grant with a more
-specific denial. Scoping is independent per API group **and** resource
-type - a Role granting access to `pods` grants nothing at all on
-`deployments.apps`, even though both are "workloads" conceptually. This
-also demonstrates authentication and authorization as genuinely separate
-stages: the token from the previous subsection is a perfectly valid,
-authenticated identity with almost no permissions at all until RBAC
-grants some.
+**Why**: **RBAC** (role-based access control) is how Kubernetes decides
+what an identity may do. A **Role** lists permissions: which verbs
+(`get`, `list`, `create`, ...) on which resources. A **RoleBinding**
+gives a Role's permissions to one or more identities.
 
-**Example**: grant `security-demo-sa` read access to Pods only, then
-test both an allowed request and a forbidden one with the same token:
+RBAC only grants. There are no "deny" rules. An identity can do exactly
+what the Roles bound to it allow, all of them added together, and
+nothing else.
+
+Each permission names a resource in a specific API group. A Role that
+allows `pods` (in the core group) allows nothing on `deployments`
+(in the `apps` group), even though you might think of both as
+"workloads".
+
+**Example**: let `security-demo-sa` read Pods, and nothing else. Then
+use the same token for a request it's allowed to make and one it isn't:
 
 ```
 kubectl apply -f tutorial/examples/security/rbac-role.yaml
 kubectl apply -f tutorial/examples/security/rbac-rolebinding.yaml
 curl -sS -k -H "Authorization: Bearer $TOKEN" "$APISERVER/api/v1/namespaces/default/pods" -o /dev/null -w '%{http_code}\n'
-curl -sS -k -H "Authorization: Bearer $TOKEN" "$APISERVER/apis/apps/v1/namespaces/default/deployments" -o /dev/null -w '%{http_code}\n'
+curl -sS -k -H "Authorization: Bearer $TOKEN" "$APISERVER/apis/apps/v1/namespaces/default/deployments"
 ```
 
-**Expected output**: `200` for Pods now that the Role grants it, `403`
-for Deployments - same token, same authentication, two different
-authorization outcomes because they're different resources in a
-different API group entirely:
+**Expected output**: `200` for Pods, which the Role now allows. The
+second `curl` prints the whole response instead of just the status
+code, so you can see the error for Deployments. It's the same token
+both times; only the resource is different:
 
 ```
 role.rbac.authorization.k8s.io/security-demo-pod-reader created
@@ -92,40 +98,44 @@ rolebinding.rbac.authorization.k8s.io/security-demo-pod-reader-binding created
 ```
 {
   "kind": "Status",
+  "apiVersion": "v1",
+  "metadata": {},
   "status": "Failure",
   "message": "deployments.apps is forbidden: User \"system:serviceaccount:default:security-demo-sa\" cannot list resource \"deployments\" in API group \"apps\" in the namespace \"default\"",
   "reason": "Forbidden",
+  "details": {
+    "group": "apps",
+    "kind": "deployments"
+  },
   "code": 403
 }
-403
 ```
 
-The error message names the exact identity, verb, resource, and API
-group that was missing - RBAC denials are specific, not a generic
-"forbidden."
+The error says exactly what was missing: which identity, which verb,
+which resource, in which API group and namespace.
 
-Both objects above were namespaced - the `Role` only exists inside
-`default`, and the `RoleBinding` binding it to `security-demo-sa` lives
-there too. The next subsection covers the cluster-scoped half of RBAC:
-`ClusterRole` and `ClusterRoleBinding`.
+A Role and a RoleBinding both belong to a namespace, here `default`, and
+only grant permissions there. The next section covers the cluster-wide
+versions.
 
-### ClusterRole and ClusterRoleBinding: cluster-scoped rules, binding-scoped effect
+### ClusterRole and ClusterRoleBinding
 
-**Why**: a `Role` only exists inside one namespace - there's no way to
-write a single `Role` that grants a permission across every namespace.
-A `ClusterRole` is the same rule syntax with no namespace of its own,
-which makes it usable two different ways depending on what binds it: a
-`ClusterRoleBinding` grants its rules everywhere, cluster-wide, while an
-ordinary namespaced `RoleBinding` can *also* reference a `ClusterRole`
-as its `roleRef` - and when it does, the grant is scoped down to just
-that one namespace, exactly like binding a `Role` would be. This is the
-standard way built-in ClusterRoles like `view`/`edit`/`admin` get reused
-per-namespace without writing the same rules out as a `Role` in every
-namespace that needs them.
+**Why**: a Role belongs to one namespace, so it can't grant anything in
+other namespaces. A **ClusterRole** has the same kind of rules but
+doesn't belong to any namespace. What it grants depends on how it's
+bound:
 
-This cluster's own kubeadm-generated admin identity is a live example of
-the cluster-wide side of this, worth looking at before writing a new
-one:
+- A **ClusterRoleBinding** grants the ClusterRole's permissions in every
+  namespace.
+- A RoleBinding can also point at a ClusterRole. Then the permissions
+  apply only in the RoleBinding's own namespace, as if it were a Role.
+
+The second way lets you define a set of permissions once and grant it
+namespace by namespace. Kubernetes's built-in ClusterRoles `view`,
+`edit` and `admin` are used like that.
+
+You've been using a ClusterRoleBinding all along. Here is the one
+kubeadm created for the cluster's admin:
 
 ```
 kubectl get clusterrolebinding kubeadm:cluster-admins -o yaml
@@ -148,16 +158,17 @@ subjects:
   name: kubeadm:cluster-admins
 ```
 
-A plain `ClusterRoleBinding`, granting the built-in `cluster-admin`
-`ClusterRole` to a `Group` subject, exactly like any other RBAC grant in
-this chapter - nothing about it is magic. (There's a second,
-older-style `ClusterRoleBinding` alongside it, `cluster-admin` bound to
-the `system:masters` group, which the next subsection comes back to.)
+It's an ordinary ClusterRoleBinding. It gives the built-in
+`cluster-admin` ClusterRole, which allows everything, to the group
+`kubeadm:cluster-admins`. The section on client certificates below shows
+who is in that group. There's also an older ClusterRoleBinding called
+`cluster-admin`, which gives the same ClusterRole to the group
+`system:masters`.
 
-**Example**: grant `security-demo-sa` a *new* permission - reading
-ConfigMaps - using a `ClusterRole`, but bind it with a namespaced
-`RoleBinding` instead of a `ClusterRoleBinding`, then check the same
-identity against two different namespaces:
+**Example**: give `security-demo-sa` one more permission, reading
+ConfigMaps, through a ClusterRole, but bind it with a RoleBinding in
+`default`. Then try reading ConfigMaps in `default` and in another
+namespace:
 
 ```
 kubectl apply -f tutorial/examples/security/clusterrole-other-ns.yaml
@@ -167,10 +178,8 @@ curl -sS -k -H "Authorization: Bearer $TOKEN" "$APISERVER/api/v1/namespaces/defa
 curl -sS -k -H "Authorization: Bearer $TOKEN" "$APISERVER/api/v1/namespaces/security-demo-clusterrole-other/configmaps" -o /dev/null -w '%{http_code}\n'
 ```
 
-**Expected output**: `200` in `default`, where the `RoleBinding` lives,
-`403` in the other namespace - the exact same `ClusterRole`, the exact
-same identity, but the grant doesn't follow the identity cluster-wide
-because it was bound with a `RoleBinding`, not a `ClusterRoleBinding`:
+**Expected output**: `200` in `default`, where the RoleBinding is, and
+`403` in the other namespace:
 
 ```
 namespace/security-demo-clusterrole-other created
@@ -180,34 +189,32 @@ rolebinding.rbac.authorization.k8s.io/security-demo-cm-reader-binding created
 403
 ```
 
-A `ClusterRoleBinding` referencing this same `security-demo-cm-reader`
-`ClusterRole` would have returned `200` for both namespaces - the rules
-are identical either way, only the binding decides the blast radius.
+With a ClusterRoleBinding to the same ClusterRole, both requests would
+have returned `200`. The rules are the same either way; the binding
+decides where they apply.
 
-Authorization's covered; the chapter turns back to authentication next.
+### Client certificates: the identity behind your `kubectl` commands
 
-### x509 client-certificate authentication: the identity behind every `kubectl` command so far
+**Why**: a ServiceAccount token is one way to authenticate. Your own
+`kubectl` commands have used another all along: a **client
+certificate**, stored in `~/.kube/config` as `client-certificate-data`
+and `client-key-data`.
 
-**Why**: the bearer token earlier in this chapter was one authentication
-mechanism, deliberately swapped in with `curl` to make it visible. Every
-plain `kubectl` command run in this entire tutorial has been
-authenticating a completely different way the whole time, via the
-`client-certificate-data`/`client-key-data` fields already sitting in
-`~/.kube/config`. The apiserver's authenticator reads two fields off
-that client certificate's subject and turns them directly into an
-identity: the Subject **CN** becomes the username, and every Subject
-**O** becomes a group membership - no lookup against any user database,
-because there isn't one. This is also exactly what the previous
-subsection's `kubeadm:cluster-admins` `ClusterRoleBinding` was waiting
-for: a `Group` subject named `kubeadm:cluster-admins` only means
-something because some certificate somewhere carries `O=kubeadm:cluster-admins`
-in its subject.
+Kubernetes has no database of users. When a request arrives with a
+client certificate, the API server takes the identity straight from the
+certificate's subject: the **CN** (common name) becomes the user name,
+and each **O** (organization) becomes a group the user belongs to. So
+the ClusterRoleBinding in the previous section, which grants
+`cluster-admin` to the group `kubeadm:cluster-admins`, applies to anyone
+whose certificate says `O=kubeadm:cluster-admins`.
 
-**Example**: decode this cluster's own admin client certificate out of
-the current kubeconfig and read its subject directly:
+**Example**: decode the admin certificate from your kubeconfig and show
+its subject and issuer. `--minify` limits the output to the current
+context, so `users[0]` is the user for this cluster even if your
+kubeconfig has others:
 
 ```
-kubectl config view --raw -o jsonpath='{.users[0].user.client-certificate-data}' | base64 -d | openssl x509 -noout -subject -issuer
+kubectl config view --minify --raw -o jsonpath='{.users[0].user.client-certificate-data}' | base64 -d | openssl x509 -noout -subject -issuer
 ```
 
 **Expected output** (on this cluster, kubeadm/Kubernetes v1.36.1):
@@ -217,96 +224,95 @@ subject=O=kubeadm:cluster-admins, CN=kubernetes-admin
 issuer=CN=kubernetes
 ```
 
-`CN=kubernetes-admin` is the username every prior chapter's `kubectl`
-commands have been running as, and `O=kubeadm:cluster-admins` is the
-group the earlier `ClusterRoleBinding` grants `cluster-admin` to - two
-fields in a certificate subject, mapped straight into the RBAC model
-this chapter has been building up. (Older kubeadm versions put this
-same admin cert's `O` in the hardcoded `system:masters` group instead -
-this cluster's second `cluster-admin` `ClusterRoleBinding`, seen in the
-previous subsection's output, is that older path kept around
-separately, not replaced.)
+You've been running every `kubectl` command as the user
+`kubernetes-admin`, in the group `kubeadm:cluster-admins`, which is why
+you could do anything. (Older kubeadm versions put the admin certificate
+in the group `system:masters` instead. That's what the older
+`cluster-admin` ClusterRoleBinding is for.)
 
-**Why the CA key matters**: `issuer=CN=kubernetes` names the cluster CA
-that signed this cert - and that CA's *private* key (`ca.key` on the
-control-plane node, never distributed to clients) is the actual root of
-trust for every identity claim above. Anyone holding it can mint a new
-client cert with any CN and any O they choose - `CN=attacker,
-O=kubeadm:cluster-admins` would be accepted exactly as readily as the
-real admin cert, because the apiserver has no way to distinguish
-"legitimately issued" from "correctly signed by the CA it trusts." RBAC
-decides what an identity can do; the CA key decides who gets to *become*
-an identity at all, which is why guarding it matters more than any
-individual RBAC grant in this chapter.
+**Why the CA key matters**: the issuer, `CN=kubernetes`, is the
+cluster's certificate authority (CA). The API server accepts any client
+certificate the CA has signed. The CA's private key (`ca.key`, kept on
+the control-plane node) is therefore what really controls who can
+become who. Anyone who has it can sign a certificate with any name and
+any group, for example `CN=attacker, O=kubeadm:cluster-admins`, and the
+API server will accept it just like the real admin certificate. RBAC
+decides what an identity can do; the CA key decides who can claim an
+identity in the first place. Protecting it matters more than any single
+RBAC rule.
 
-### Curling the API with a client certificate, the x509 counterpart to the bearer-token example
+### Using a client certificate with curl
 
-**Why**: the ServiceAccount subsection proved `kubectl` is just an HTTPS
-client by swapping in a bearer token; the same trick works for x509 -
-extract the three PEM values kubeconfig already carries
-(`client-certificate-data`, `client-key-data`,
-`certificate-authority-data`) and hand them to `curl` directly, no
-`kubectl` or its credential-loading machinery involved at all.
+**Why**: you can use the client certificate with `curl` too, the same
+way you used the token. Your kubeconfig holds everything needed: the
+certificate, its key, and the cluster's CA certificate
+(`certificate-authority-data`), which lets `curl` check that it's
+talking to the real API server.
 
-**Example**: decode all three fields to files, then use them with
-`curl --cert`/`--key`/`--cacert` in place of `-k` and a bearer token:
+**Example**: decode the three values to files, then pass them to `curl`
+with `--cert`, `--key` and `--cacert`:
 
 ```
-kubectl config view --raw -o jsonpath='{.users[0].user.client-certificate-data}' | base64 -d > /tmp/admin.crt
-kubectl config view --raw -o jsonpath='{.users[0].user.client-key-data}' | base64 -d > /tmp/admin.key
-kubectl config view --raw -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' | base64 -d > /tmp/ca.crt
+kubectl config view --minify --raw -o jsonpath='{.users[0].user.client-certificate-data}' | base64 -d > /tmp/admin.crt
+kubectl config view --minify --raw -o jsonpath='{.users[0].user.client-key-data}' | base64 -d > /tmp/admin.key
+kubectl config view --minify --raw -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' | base64 -d > /tmp/ca.crt
 curl -sS --cert /tmp/admin.crt --key /tmp/admin.key --cacert /tmp/ca.crt "$APISERVER/api/v1/namespaces/default/pods" -o /dev/null -w '%{http_code}\n'
 ```
 
-**Expected output**: `200` - a real, working request against the live
-API server, authenticated entirely by the certificate's signature and
-subject fields, with no bearer token and no `-k` skip-verification flag
-needed since `--cacert` gives `curl` the actual cluster CA to validate
-against:
+**Expected output**: `200`. The certificate identified you as the admin.
+And because `--cacert` told `curl` which CA to trust, it could check the
+API server's certificate, so `-k` (skip the check) wasn't needed:
 
 ```
 200
 ```
 
-### `kubectl proxy`: the same URL, a different auth path entirely
+`/tmp/admin.key` is the cluster admin's private key. Delete the three
+files when you're done with them:
 
-**Why**: every direct `curl` example in this chapter has required
-manually solving two separate problems at once - proving identity
-(`-H "Authorization: Bearer ..."` or `--cert`/`--key`) and establishing
-TLS trust (`-k` to skip it, or `--cacert` to do it properly).
-`kubectl proxy` collapses both into kubectl's own already-configured
-kubeconfig: it opens a local, unauthenticated HTTP endpoint and forwards
-every request to the real apiserver using whatever identity and TLS
-trust `kubectl` itself already has configured. That makes it a
-deliberately blunt diagnostic tool - if a direct `curl` against the API
-is failing and it's unclear whether that's a TLS/connectivity problem or
-an RBAC problem, routing the same request through `kubectl proxy`
-instead answers the question: connectivity is no longer in play at all,
-so anything that still fails there is genuinely RBAC, and anything that
-now succeeds was never an RBAC problem in the first place.
+```
+rm /tmp/admin.crt /tmp/admin.key /tmp/ca.crt
+```
 
-**Example**: first, a direct `curl` against the real apiserver URL with
-no cert flags and no `-k` - the kind of mistake that looks like the API
-is unreachable:
+### `kubectl proxy`: letting kubectl handle identity and TLS
+
+**Why**: every `curl` so far had to handle two things: proving who you
+are (a token, or `--cert` and `--key`), and trusting the API server's
+certificate (`-k`, or `--cacert`). `kubectl proxy` handles both for you.
+It listens on a local port, without TLS or authentication, and forwards
+each request to the API server using your kubeconfig's identity and CA.
+
+That makes it useful for troubleshooting. If a `curl` to the API server
+fails and you can't tell whether the problem is the connection or
+permissions, send the same request through `kubectl proxy`. The
+connection is then taken care of, so if it still fails, the problem is
+permissions.
+
+**Example**: first, `curl` straight to the API server with no
+certificate options and no `-k`. It looks as if the API server can't be
+reached:
 
 ```
 curl -sS "$APISERVER/api/v1/namespaces/default/pods" -o /dev/null -w '%{http_code}\n'
 ```
 
-**Expected output**: not an HTTP status code at all - `curl` refuses to
-even complete the TLS handshake, because the apiserver's certificate is
-signed by this cluster's own CA, which isn't in `curl`'s default trust
-store:
+**Expected output**: no HTTP status at all (`000`). `curl` stops during
+the TLS handshake, because the API server's certificate is signed by
+the cluster's own CA, which `curl` doesn't know about:
 
 ```
 curl: (60) SSL certificate OpenSSL verify result: unable to get local issuer certificate (20)
+More details here: https://curl.se/docs/sslcerts.html
+
+curl failed to verify the legitimacy of the server and therefore could not
+establish a secure connection to it. To learn more about this situation and
+how to fix it, please visit the webpage mentioned above.
 000
 ```
 
-Now the same resource, through `kubectl proxy`, impersonating the
-low-privilege `security-demo-sa` identity from earlier in this chapter
-so the RBAC boundary stays visible instead of masked by admin
-permissions:
+Now the same requests through `kubectl proxy`. `--as` makes the proxy
+act as `security-demo-sa` rather than as you, the admin, so RBAC still
+limits what it can do:
 
 ```
 kubectl proxy --as=system:serviceaccount:default:security-demo-sa --port=8765 &
@@ -315,12 +321,9 @@ curl -sS "http://127.0.0.1:8765/apis/apps/v1/namespaces/default/deployments" -o 
 kill %1
 ```
 
-**Expected output**: `200` for Pods - proving the connectivity failure
-above was never about the API being unreachable, only about the direct
-`curl` invocation's own missing TLS trust - and `403` for Deployments,
-the exact same RBAC boundary from the ServiceAccount/RBAC subsections
-earlier, now unambiguous because `kubectl proxy` already solved
-connectivity:
+**Expected output**: `200` for Pods, so the API server was reachable all
+along; the earlier failure was only `curl` not trusting its
+certificate. `403` for Deployments is the same RBAC limit as before:
 
 ```
 Starting to serve on 127.0.0.1:8765
@@ -328,84 +331,83 @@ Starting to serve on 127.0.0.1:8765
 403
 ```
 
-Identity and authorization are both covered now - the chapter turns to
-the third, independent pipeline stage named in its opening: admission.
-
 ### Admission control: Pod Security Admission
 
-**Why**: **PodSecurityPolicy was removed entirely in 1.25.** Its stable
-replacement, Pod Security Admission (PSA), needs no object at all - just
-a label on the namespace (`pod-security.kubernetes.io/enforce=<level>`,
-one of `privileged`/`baseline`/`restricted`). Admission is the third
-pipeline stage: a request can be fully authenticated and authorized and
-still be rejected here, evaluated independently of both. And admission
-succeeding is not the same as the Pod actually working - a stock image
-built assuming root can pass `restricted` admission (which only checks
-the Pod *spec*, not what the image does at runtime) and then crash-loop
-immediately, because `restricted` in practice usually means choosing an
-image actually built for rootless execution, not just adding a
-`securityContext` block to an unmodified one.
+**Why**: admission is the third check. A request can come from a known
+identity, be allowed by RBAC, and still be rejected here.
 
-**Example**: label a namespace `restricted`, then try a Pod that
-violates it outright:
+One of the checks at this stage is **Pod Security Admission** (PSA). It
+compares each new Pod against one of three predefined levels:
+`privileged` (anything goes), `baseline` (blocks the most dangerous
+settings) and `restricted` (requires a locked-down Pod: not running as
+root, no extra Linux capabilities, and so on). You choose the level for
+a namespace with a label, `pod-security.kubernetes.io/enforce=<level>`;
+there's no separate object to create. PSA replaced PodSecurityPolicy,
+which was removed in Kubernetes **1.25**.
+
+PSA only looks at the Pod's spec. It can't know what the container
+image does once it runs. So a Pod can pass `restricted` and still fail
+to start, because the image expects to run as root. In practice, using
+`restricted` usually means using images built to run as a non-root user,
+not just adding a `securityContext` to an existing Pod.
+
+**Example**: label a namespace `restricted`, then try to create a
+privileged Pod in it:
 
 ```
 kubectl apply -f tutorial/examples/security/restricted-namespace.yaml
 kubectl apply -f tutorial/examples/security/admission-denied-pod.yaml
 ```
 
-**Expected output**: rejected outright - the Pod is never created, and
-the error lists every specific requirement it violates, not just "denied":
+**Expected output**: the Pod is rejected and never created. The error
+lists every rule it breaks:
 
 ```
 namespace/security-demo-restricted created
 Error from server (Forbidden): error when creating "tutorial/examples/security/admission-denied-pod.yaml": pods "security-demo-privileged-pod" is forbidden: violates PodSecurity "restricted:latest": privileged (container "nginx" must not set securityContext.privileged=true), allowPrivilegeEscalation != false (container "nginx" must set securityContext.allowPrivilegeEscalation=false), unrestricted capabilities (container "nginx" must set securityContext.capabilities.drop=["ALL"]), runAsNonRoot != true (pod or container "nginx" must set securityContext.runAsNonRoot=true), seccompProfile (pod or container "nginx" must set securityContext.seccompProfile.type to "RuntimeDefault" or "Localhost")
 ```
 
-Now a Pod that satisfies every `restricted` requirement on paper -
-`runAsNonRoot`, no privilege escalation, all capabilities dropped,
-`RuntimeDefault` seccomp - using the same stock `nginx` image every
-prior chapter used unmodified:
+Now a Pod that follows every `restricted` rule: it runs as user 1000,
+can't gain privileges, drops all capabilities and uses the default
+seccomp profile. It uses the same `nginx` image as earlier chapters:
 
 ```
 kubectl apply -f tutorial/examples/security/admission-allowed-crash-pod.yaml
-kubectl get pod security-demo-restricted-compliant-pod -n security-demo-restricted
-kubectl logs security-demo-restricted-compliant-pod -n security-demo-restricted
 ```
-
-**Expected output**: admission accepts it - the Pod object gets created,
-unlike the privileged one - and then it crash-loops immediately, for a
-completely mundane reason: the stock image bakes in root-owned
-directories it can no longer write to as UID 1000:
 
 ```
 pod/security-demo-restricted-compliant-pod created
-
-NAME                                      READY   STATUS   RESTARTS     AGE
-security-demo-restricted-compliant-pod   0/1     Error    1 (6s ago)   8s
 ```
 
+This time the Pod is created. Give it a minute (longer if `nginx:1.27`
+still has to be pulled), then look at it and at the end of its log:
+
 ```
-2026/08/28 05:38:49 [emerg] 1#1: mkdir() "/var/cache/nginx/client_temp" failed (13: Permission denied)
+kubectl get pod security-demo-restricted-compliant-pod -n security-demo-restricted
+kubectl logs security-demo-restricted-compliant-pod -n security-demo-restricted --tail=2
+```
+
+**Expected output**: the Pod keeps crashing. The `nginx` image needs to
+create directories that only root can write to, and it's running as
+user 1000:
+
+```
+NAME                                     READY   STATUS   RESTARTS      AGE
+security-demo-restricted-compliant-pod   0/1     Error    2 (18s ago)   91s
+2026/11/19 11:06:30 [emerg] 1#1: mkdir() "/var/cache/nginx/client_temp" failed (13: Permission denied)
 nginx: [emerg] mkdir() "/var/cache/nginx/client_temp" failed (13: Permission denied)
 ```
 
-Nothing about this is a `restricted`-policy bug - the Pod spec is fully
-compliant, admission did its job correctly. The image just wasn't built
-to run as anyone but root, which `restricted` admission has no way to
-know or check.
+Admission did its job: the Pod spec follows the rules. The image just
+wasn't built to run as anyone but root, and admission can't check that.
 
-### Aside: admission-plugin flags only show additions to a compiled-in default set
+### Aside: which admission plugins are running?
 
-PSA is one admission plugin among many, and it's already enabled by
-default - nothing in the example above turned it on. `kube-apiserver`'s
-`--enable-admission-plugins` flag doesn't take a full replacement list;
-its own `--help` text says so explicitly: "admission plugins that should
-be enabled **in addition to** default enabled ones." This cluster's own
-static-pod manifest only sets `--enable-admission-plugins=NodeRestriction`
-- everything else PSA relies on (`PodSecurity` itself, `ServiceAccount`,
-`LimitRanger`, and a dozen more) is already running, compiled in, before
-that flag is even evaluated:
+PSA is one of many **admission plugins** built into the API server. You
+didn't have to turn it on. The API server's `--enable-admission-plugins`
+flag only lists plugins to enable *in addition to* the default ones, so
+it doesn't tell you everything that's running. On this cluster, it lists
+only one:
 
 ```
 docker exec k8s-lab-default-control-plane cat /etc/kubernetes/manifests/kube-apiserver.yaml | grep admission-plugins
@@ -415,17 +417,15 @@ docker exec k8s-lab-default-control-plane cat /etc/kubernetes/manifests/kube-api
     - --enable-admission-plugins=NodeRestriction
 ```
 
-**A caution on where `--help` is actually reachable**: `kube-apiserver`
-doesn't run as a process on the kind node's own root filesystem - it's
-a separate static-pod container, so `docker exec` into the node
-container itself can't find the binary at all:
+To see the default list, ask `kube-apiserver --help`. The binary isn't on
+the node itself. The API server runs in its own container, so looking
+for it on the node finds nothing:
 
 ```
 docker exec k8s-lab-default-control-plane which kube-apiserver
 ```
 
-produces no output - nothing is on `$PATH` there. Reaching `--help`
-means going through the pod, not the node:
+prints nothing. Run it inside the API server's Pod instead:
 
 ```
 kubectl exec -n kube-system kube-apiserver-k8s-lab-default-control-plane -- kube-apiserver --help 2>&1 | grep -A1 "^\s*--enable-admission-plugins"
@@ -435,96 +435,98 @@ kubectl exec -n kube-system kube-apiserver-k8s-lab-default-control-plane -- kube
       --enable-admission-plugins strings             admission plugins that should be enabled in addition to default enabled ones (NamespaceLifecycle, LimitRanger, ServiceAccount, TaintNodesByCondition, PodSecurity, Priority, DefaultTolerationSeconds, DefaultStorageClass, StorageObjectInUseProtection, PodGroupProtection, PersistentVolumeClaimResize, RuntimeClass, CertificateApproval, CertificateSigning, ClusterTrustBundleAttest, CertificateSubjectRestriction, DefaultIngressClass, PodTopologyLabels, PodGroupWorkloadExists, NodeDeclaredFeatureValidator, JobValidation, PodResizeValidator, MutatingAdmissionPolicy, MutatingAdmissionWebhook, ValidatingAdmissionPolicy, ValidatingAdmissionWebhook, ResourceQuota). ...
 ```
 
-`kubectl exec` reaches it because the binary lives inside the
-apiserver's own container image, not on the node's filesystem -
-`docker exec` into the node and `kubectl exec` into the pod are
-answering fundamentally different "where does this run" questions, and
-only one of them lands inside the container that actually has
-`kube-apiserver` on its `$PATH`.
+`PodSecurity` is in the default list, along with `ServiceAccount`,
+`LimitRanger`, `ResourceQuota` and many others. `docker exec` runs a
+command on the node; `kubectl exec` runs it inside a container in a Pod.
+Here, only the container has `kube-apiserver`.
 
-That aside was a detour into admission internals - the chapter closes
-with a mechanism outside the authentication/authorization/admission
-pipeline entirely, one that depends on the CNI covered back in chapter
-5.
+### NetworkPolicy: controlling traffic between Pods
 
-### NetworkPolicy: accepted by the API regardless of whether anything enforces it
+**Why**: by default, any Pod can connect to any other Pod. A
+**NetworkPolicy** limits that: it selects some Pods and says which other
+Pods may connect to them.
 
-**Why**: a `NetworkPolicy` object is validated and stored by the
-apiserver exactly like any other object (chapter 2) - the apiserver has
-no way to know whether any CNI plugin actually implements
-`NetworkPolicy` enforcement, so an unenforced policy isn't rejected or
-flagged, it just silently does nothing. **Whether a given CNI enforces
-NetworkPolicy at all is not something to take on faith - check it.**
-This isn't a hypothetical caution: while verifying this exact chapter,
-kindnetd (this repo's `default` profile CNI) turned out to genuinely
-enforce `NetworkPolicy`, contradicting this repo's own `DESIGN.md`,
-which - accurately, for a long time - documented kindnetd as *not*
-enforcing it. kindnetd has since gained an embedded, nftables-based
-enforcer (`kube-network-policies`, confirmed via kindnet's own pod logs -
-see `docs/findings.md`, 2026-08-28 entry). `DESIGN.md` has been corrected
-accordingly. The lesson generalizes past this one CNI: "minimal CNI, no
-NetworkPolicy support" is exactly the kind of claim that ages badly
-without a live check, which is the whole reason this tutorial insists on
-verifying against a real cluster rather than writing from memory.
+The API server stores a NetworkPolicy like any other object, but it
+doesn't enforce it. The network plugin (CNI, chapter 5) does, if it
+supports NetworkPolicy at all. If it doesn't, the policy is accepted
+without any error or warning and has no effect. So don't assume either
+way: test it.
 
-**Example**: on the `default` profile (kindnetd), deploy a target Pod, a
-client that matches the policy's allowed label and one that doesn't,
-confirm both can reach the target with no policy present, then apply a
-policy that should block the non-matching one:
+This repo learned that the hard way. Its documentation used to say that
+kindnetd, the CNI in the `default` profile, doesn't enforce
+NetworkPolicy. Testing this chapter showed that it now does, with a
+built-in enforcer called `kube-network-policies` (see
+`docs/findings.md`, 2026-08-28).
+
+**Example**: on the `default` profile, create a target Pod (nginx) and
+two client Pods (busybox). The policy will allow one client, labelled
+`role: frontend`, and not the other, labelled `role: other`:
 
 ```
 kubectl apply -f tutorial/examples/security/netpol-target-pod.yaml
 kubectl apply -f tutorial/examples/security/netpol-client-allowed-pod.yaml
 kubectl apply -f tutorial/examples/security/netpol-client-blocked-pod.yaml
+```
+
+When all three are `Running` (`kubectl get pods`), check that the
+second client can reach the target while there's no policy yet.
+`head -1` keeps just the first line of nginx's welcome page:
+
+```
 TARGET_IP=$(kubectl get pod security-demo-target -o jsonpath='{.status.podIP}')
-kubectl exec security-demo-client-blocked -- wget -qO- -T 5 "http://$TARGET_IP" | head -1   # baseline, no policy yet
+kubectl exec security-demo-client-blocked -- wget -qO- -T 5 "http://$TARGET_IP" | head -1
+```
+
+```
+<!DOCTYPE html>
+```
+
+Now apply the policy and try both clients:
+
+```
 kubectl apply -f tutorial/examples/security/networkpolicy.yaml
-kubectl exec security-demo-client-blocked -- wget -qO- -T 5 "http://$TARGET_IP" | head -1   # after the policy
+kubectl exec security-demo-client-blocked -- wget -qO- -T 5 "http://$TARGET_IP" | head -1
 kubectl exec security-demo-client-allowed -- wget -qO- -T 5 "http://$TARGET_IP" | head -1
-kubectl logs -n kube-system <a-kindnet-pod> | grep -i "network-polic"
 ```
 
-**Expected output (default profile, kindnetd)**: reachable before the
-policy, genuinely blocked after it - a real timeout, not an instant
-refusal:
+**Expected output (default profile, kindnetd)**: the `role: other`
+client is blocked and the `role: frontend` client still gets the page.
+The blocked request times out after 5 seconds (`-T 5`) rather than
+being refused, because its packets are dropped:
 
 ```
-$ kubectl exec security-demo-client-blocked -- wget -qO- -T 5 "http://$TARGET_IP"   # before
-<!DOCTYPE html>...
-
-$ kubectl apply -f tutorial/examples/security/networkpolicy.yaml
 networkpolicy.networking.k8s.io/security-demo-netpol created
-
-$ kubectl exec security-demo-client-blocked -- wget -qO- -T 5 "http://$TARGET_IP"   # after
 wget: download timed out
 command terminated with exit code 1
-
-$ kubectl exec security-demo-client-allowed -- wget -qO- -T 5 "http://$TARGET_IP"   # after, matching Pod
-<!DOCTYPE html>...
+<!DOCTYPE html>
 ```
 
-And kindnet's own logs confirm the mechanism, not just the symptom:
+kindnet's logs show the enforcer starting. `kubectl logs` on a
+DaemonSet picks one of its Pods and says which:
 
 ```
-"Starting controller" name="kube-network-policies"
-"Waiting for the policy engine to become ready..."
-"Policy engine is ready."
-"Syncing nftables rules" logger="nftables-sync"
+kubectl logs -n kube-system daemonset/kindnet | grep -iE "kube-network-policies|policy engine|nftables"
 ```
 
-Now the same objects, on `calico` - not because it's the only CNI that
-enforces `NetworkPolicy` anymore, but because independently confirming
-enforcement on a second, purpose-built CNI is still worth doing rather
-than assuming this repo's two profiles behave identically just because
-one does.
+```
+Found 3 pods, using pod/kindnet-jspwg
+I1119 11:04:21.862342       1 controller.go:173] "Starting controller" name="kube-network-policies"
+I1119 11:04:21.862355       1 controller.go:178] "Waiting for the policy engine to become ready..."
+I1119 11:04:22.362472       1 controller.go:185] "Policy engine is ready."
+I1119 11:04:22.362577       1 controller.go:462] "Syncing nftables rules" logger="nftables-sync"
+I1119 11:04:22.365643       1 controller.go:465] "Syncing nftables rules" logger="nftables-sync" elapsed="3.037843ms"
+```
 
-**Heads-up**: the block below tears down and rebuilds the cluster
-(`default` -> `calico` -> back), which takes roughly 10 minutes round-trip
-- mostly `calico`'s own `kind create cluster --wait 5m` genuinely
-spending the full 5 minutes, since that profile disables kindnetd
-entirely (`disableDefaultCNI: true`) and nodes can't report `Ready`
-until Calico's manifest is applied afterward; skim to **Expected output
-(calico profile)** below to see the result without running it yourself:
+The `calico` profile uses Calico, a CNI built with NetworkPolicy in
+mind. The same policy works there too, through a completely separate
+implementation.
+
+**Heads-up**: trying it means replacing the `default` cluster with a
+`calico` one and back again, about 10 minutes in total. Most of that is
+`make up PROFILE=calico`: the nodes can't become `Ready` until Calico is
+installed, which happens after cluster creation, so `kind create
+cluster` waits out its full 5-minute timeout. The expected output is
+below if you'd rather not run it:
 
 ```
 kubectl delete -f tutorial/examples/security/networkpolicy.yaml -f tutorial/examples/security/netpol-target-pod.yaml -f tutorial/examples/security/netpol-client-allowed-pod.yaml -f tutorial/examples/security/netpol-client-blocked-pod.yaml
@@ -539,23 +541,16 @@ kubectl exec security-demo-client-allowed -- wget -qO- -T 5 "http://$TARGET_IP" 
 kubectl exec security-demo-client-blocked -- wget -qO- -T 5 "http://$TARGET_IP" | head -1
 ```
 
-**Expected output (calico profile)**: the same real block/allow split as
-kindnetd - same policy YAML, independently confirmed on a second CNI:
+**Expected output (calico profile)**: the same result as with kindnetd.
+The allowed client gets the page; the other one times out:
 
 ```
-<!DOCTYPE html>...          # allowed client - succeeds
-
+<!DOCTYPE html>
 wget: download timed out
-command terminated with exit code 1   # blocked client - fails
+command terminated with exit code 1
 ```
 
-Two different CNIs, two independent NetworkPolicy implementations, the
-same observed enforcement - worth having actually run both rather than
-assumed either from documentation, given this chapter's own opening
-example of what happens when that assumption goes unchecked.
-
-Remember to switch back afterward if you're continuing through the rest
-of this tutorial on `default`:
+To continue with the rest of the tutorial on `default`, switch back:
 
 ```
 make down PROFILE=calico

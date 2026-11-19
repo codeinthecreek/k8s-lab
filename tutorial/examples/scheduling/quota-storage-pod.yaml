@@ -1,7 +1,8 @@
 # Binds quota-storage-pvc.yaml's PVC and writes a handful of bytes to
 # it - deliberately far less than the 1Gi declared - to check whether
 # the ResourceQuota's Used column tracks the declared claim or the
-# actual bytes on disk.
+# actual bytes on disk. It declares CPU and memory because the
+# namespace's scheduling-demo-quota requires every Pod to.
 apiVersion: v1
 kind: Pod
 metadata:
@@ -12,6 +13,13 @@ spec:
   - name: writer
     image: busybox:1.36
     command: ["sh", "-c", "echo hi > /data/tiny.txt; sleep 3600"]
+    resources:
+      requests:
+        cpu: "50m"
+        memory: "32Mi"
+      limits:
+        cpu: "100m"
+        memory: "64Mi"
     volumeMounts:
     - name: data
       mountPath: /data
