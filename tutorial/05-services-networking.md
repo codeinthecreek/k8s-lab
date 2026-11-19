@@ -1,42 +1,33 @@
 # 5. Services and networking
 
-Chapter 3's Deployment gave a stable *set* of Pods, but each Pod's own
-IP is still not stable - it's assigned on creation and gone the moment
-that Pod is replaced (chapter 3 replaced plenty of Pods along the way).
-A Service is Kubernetes' answer to "how do I address a moving target":
-a stable virtual IP and/or DNS name that always resolves to whichever
-Pods currently match a label selector - the same selector-based
-membership model chapter 3 already introduced for ReplicaSets, applied
-here to network addressing instead of process supervision. This chapter
-starts one layer lower than Services, though - with the CNI plugin that
-gives every Pod its IP in the first place, since Services and kube-proxy
-both take that IP's existence for granted - then covers the Service
-types in the order you'd actually reach for them, then Ingress as an L7
-(application layer - HTTP paths and hostnames) layer built on top of a
-Service rather than a replacement for one.
+A Deployment (chapter 3) keeps a set of Pods running, but each Pod's IP
+address changes whenever the Pod is replaced. A **Service** gives a set
+of Pods one address that doesn't change: a virtual IP and a DNS name
+that always lead to whichever Pods currently match its label selector,
+the same kind of selector a ReplicaSet uses.
+
+This chapter starts one level lower, with the network plugin that gives
+each Pod its IP address in the first place. Then it covers the Service
+types, in the order you'd usually need them, and finally Ingress, which
+routes HTTP requests by path and host name to Services.
 
 ### CNI: how a Pod gets an IP in the first place
 
-**Why**: chapter 1 mentioned a **CNI plugin** running on every node
-without saying what it actually does. It's not kubelet's job (kubelet
-manages containers, not network routes) and it's not kube-proxy's job
-either (kube-proxy only programs *Service* virtual IPs, covered below -
-it has nothing to do with a Pod getting its own IP). CNI (**Container
-Network Interface**) is a plugin interface, not a Kubernetes-specific
-concept - other container runtimes use it too. For every Pod sandbox it
-creates, kubelet hands off to whatever plugin binary is registered on
-that node (`/opt/cni/bin`, configured via `/etc/cni/net.d`); that plugin
-assigns the Pod an IP and wires up its network interface. Which plugin
-is installed is entirely up to whoever set up the cluster - Calico,
-Cilium, kindnetd, and others all implement the same interface
-differently, which is exactly what "pluggable" buys: everything above
-this layer (Services, DNS, NetworkPolicy) is written against Pod IPs
-existing and being routable, not against any one CNI's internals.
+**Why**: chapter 1 mentioned a **CNI plugin** on every node. CNI
+(Container Network Interface) is a standard way for container runtimes
+to set up networking; it isn't specific to Kubernetes. Whenever the
+kubelet creates a Pod, it calls the CNI plugin installed on the node
+(programs in `/opt/cni/bin`, configured in `/etc/cni/net.d`). The plugin
+gives the Pod an IP address and connects its network interface.
+
+Which plugin is used depends on how the cluster was set up: Calico,
+Cilium, kindnetd and many others all implement the same interface in
+different ways. Everything else in this chapter only assumes that every
+Pod has an IP address and that Pods can reach each other at those
+addresses.
 
 **Example**: this repo's `default` profile uses **kindnetd**, kind's own
-built-in CNI - a real (if minimal) implementation, not a stand-in, built
-by chaining standard upstream CNI plugin binaries rather than
-reinventing per-Pod networking from scratch:
+CNI. It's small, and built from standard CNI plugins:
 
 ```
 docker exec k8s-lab-default-worker cat /etc/cni/net.d/10-kindnet.conflist
@@ -44,14 +35,11 @@ docker exec k8s-lab-default-worker ls /opt/cni/bin/
 kubectl get daemonset -n kube-system kindnet
 ```
 
-**Expected output**: a CNI conflist chaining two well-known plugins -
-`ptp` wires up the Pod's actual virtual interface, `host-local` hands
-out an IP from this node's own slice of the cluster's Pod CIDR - plus
-one `kindnet` DaemonSet Pod per node (DaemonSet as a general workload
-type - one Pod per node rather than a chosen replica count - is covered
-in chapter 6; what matters here is just kindnetd's own controller
-process, distinct from the `ptp`/`host-local` plugin binaries kubelet
-invokes directly):
+**Expected output**: the configuration chains two standard plugins.
+`ptp` creates the Pod's network interface, and `host-local` assigns it
+an IP address from this node's share of the cluster's Pod addresses.
+There's also a `kindnet` Pod on every node, run by a DaemonSet (a
+workload type with one Pod per node, covered in chapter 6):
 
 ```json
 {
@@ -78,12 +66,10 @@ NAME      DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR    
 kindnet   3         3         3       3            3           kubernetes.io/os=linux   15h
 ```
 
-`10.244.1.0/24` here is only this one node's slice of the Pod CIDR -
-`ptp` + `host-local` alone can assign an IP and get a Pod talking to
-other Pods *on the same node*, but reaching a Pod on a *different*
-node's slice needs a route to that node, and that's specifically what
-the `kindnet` DaemonSet Pods add, not the CNI plugin binaries invoked at
-Pod-creation time:
+`10.244.1.0/24` is this node's share of the Pod addresses. `ptp` and
+`host-local` are enough for Pods on the same node to reach each other.
+To reach a Pod on another node, the node needs a route to that node's
+addresses, and that's what the `kindnet` Pods add:
 
 ```
 docker exec k8s-lab-default-worker ip route
@@ -97,38 +83,29 @@ default via 172.19.0.1 dev eth0
 172.19.0.0/16 dev eth0 proto kernel scope link src 172.19.0.3
 ```
 
-The two routes that matter here are `10.244.0.0/24 via 172.19.0.2` and
-`10.244.2.0/24 via 172.19.0.4` - one per *other* node, each pointing at
-that node's own Docker container IP. That's how a packet addressed to a
-Pod on a different node's subnet actually gets there, maintained
-continuously by kindnetd's controller loop rather than set up once and
-forgotten (the other lines are the default route and this node's own
-local Pod veth/subnet, unrelated to cross-node routing). A different CNI
-solves the same cross-node reachability problem with a completely
-different mechanism (BGP peering, a vxlan/ipip overlay, eBPF) - which is
-exactly why chapter 9 checks NetworkPolicy enforcement on kindnetd *and*
-Calico separately rather than assuming one CNI's behavior generalizes to
-every other.
-
-With Pods now reachable by IP at all, the rest of this chapter builds
-the stable-address layer on top of that - starting with the most
-common Service type.
+The two routes that matter are `10.244.0.0/24 via 172.19.0.2` and
+`10.244.2.0/24 via 172.19.0.4`: one for each other node, through that
+node's container IP on the Docker network. The kindnet Pods keep these
+routes up to date. Other CNIs solve the same problem in completely
+different ways (BGP, overlay networks such as VXLAN, eBPF), which is
+why chapter 9 tests NetworkPolicy on both kindnetd and Calico rather
+than assuming they behave the same.
 
 ### ClusterIP: the default, cluster-internal Service
 
-**Why**: most traffic in a cluster is Pod-to-Pod, and `ClusterIP` (the
-default type if you don't set one) is built for exactly that - a stable
-virtual IP, reachable only from inside the cluster, that always load-
-balances to whichever Pods currently match `spec.selector`. kube-proxy
-(chapter 1) is what actually implements this: it watches Services and
-Endpoints/EndpointSlices and programs each node's packet handling so
-traffic to the virtual IP gets redirected to a real Pod IP, with no
-proxy process actually sitting in the data path.
+**Why**: most traffic in a cluster goes from Pod to Pod. A `ClusterIP`
+Service, the default type, is for that: a virtual IP that can only be
+reached from inside the cluster, and that spreads connections over the
+Pods matching `spec.selector`. kube-proxy (chapter 1) makes it work: it
+watches Services and their endpoints (the IPs of the matching Pods) and
+sets up packet rules on every node that redirect traffic for the
+virtual IP to one of those Pods. No proxy process sits in between.
 
-**Example**: `tutorial/examples/services-networking/backend-deployment.yaml`
-(3 nginx replicas, `app: services-demo`) backs every Service example in
-this chapter. `tutorial/examples/services-networking/clusterip-service.yaml`
-selects it:
+**Example**: [`backend-deployment.yaml`](examples/services-networking/backend-deployment.yaml)
+runs 3 nginx replicas labelled `app: services-demo`, the backend for
+every Service in this chapter.
+[`clusterip-service.yaml`](examples/services-networking/clusterip-service.yaml)
+selects them:
 
 ```
 kubectl apply -f tutorial/examples/services-networking/backend-deployment.yaml
@@ -137,9 +114,8 @@ kubectl get svc services-demo-clusterip
 kubectl get endpointslice -l kubernetes.io/service-name=services-demo-clusterip
 ```
 
-**Expected output**: the EndpointSlice's addresses are exactly the 3
-backend Pods' real IPs - not an abstraction, a literal live list kube-
-proxy programs into every node's packet handling:
+**Expected output**: the Service's virtual IP, and an **EndpointSlice**
+listing the IPs of the 3 backend Pods. kube-proxy reads that list:
 
 ```
 NAME                      TYPE        CLUSTER-IP    EXTERNAL-IP   PORT(S)   AGE
@@ -157,19 +133,13 @@ services-demo-backend-b848b94c9-jg8hg   1/1     Running   0          9s    10.24
 services-demo-backend-b848b94c9-ktbs9   1/1     Running   0          9s    10.244.2.53   k8s-lab-default-worker2
 ```
 
-Same three addresses, same order - if a Pod were replaced right now, the
-EndpointSlice would update within moments and the ClusterIP itself
-wouldn't change at all.
+The same three addresses. If a Pod were replaced now, the EndpointSlice
+would be updated within moments, and the Service's IP wouldn't
+change.
 
-**A note on `endpointslice` vs. `endpoints`**: the older, singular
-`Endpoints` object (`kubectl get endpoints` / its `ep` shortname) is
-still readable, but the API tells you not to reach for it. (This
-subsection, `ExternalName` below, and this chapter's closing CoreDNS
-`rewrite` section were all captured against the same backend Deployment
-and Service recreated fresh for this pass, so the Pod addresses and
-ClusterIP below differ from the earlier ClusterIP/EndpointSlice capture
-above; nothing about the mechanism changed, addresses are just assigned
-on creation the way chapter 3 covered.)
+**EndpointSlice and Endpoints**: older material uses the `Endpoints`
+object (`kubectl get endpoints`, or `ep`). You can still read it, but
+the API warns you not to:
 
 ```
 kubectl get endpoints services-demo-clusterip
@@ -181,45 +151,35 @@ NAME                      ENDPOINTS                                      AGE
 services-demo-clusterip   10.244.1.22:80,10.244.2.22:80,10.244.2.23:80   9s
 ```
 
-That's not a cosmetic rename - it's a scaling fix. A `Service` gets
-exactly one `Endpoints` object, so every address for every backend Pod
-lives in that single object; one Pod added or removed anywhere in a
-large Service means the *entire* object, every address in it, gets
-rewritten and re-sent to every node's kube-proxy watching it - cost
-proportional to total backend count on every single change.
-`EndpointSlice` shards the same addresses across multiple slice objects
-(capped by default at 100 addresses per slice), each with its own
-`kubernetes.io/service-name` label tying it back to the Service (used
-in this chapter's `-l kubernetes.io/service-name=...` selector above)
-- so a churn event on one Pod only touches the one slice it belongs to,
-not a copy of the whole Service's endpoint list. `endpoints`/`ep` still
-work today (the warning above is a deprecation notice, not a removal),
-which is exactly why it's worth knowing to reach for `endpointslice`
-instead rather than only learning about the switch when `ep` eventually
-stops working.
+The reason is scale. A Service has a single `Endpoints` object holding
+every address. In a large Service, adding or removing one Pod means
+rewriting the whole object and sending all of it to kube-proxy on every
+node. EndpointSlices split the addresses over several objects (up to
+100 addresses each by default), each labelled
+`kubernetes.io/service-name` with its Service's name, as used in the
+`-l` selector above. A change to one Pod only touches one slice.
+`endpoints` still works for now; the warning is a deprecation notice,
+not a removal.
 
 ### CoreDNS: turning Service names into addresses
 
-**Why**: a ClusterIP is stable, but still just a number - CoreDNS is
-what makes `services-demo-clusterip` (or the fully-qualified
-`services-demo-clusterip.default.svc.cluster.local`) resolve to it, so
-nothing in-cluster needs to know actual IPs at all. CoreDNS runs as an
-ordinary Deployment in `kube-system` (chapter 1 showed it in the static
-pod vs. controller-managed distinction - CoreDNS is controller-managed,
-not static), configured via a Corefile that lives in the `coredns`
-ConfigMap - the same ConfigMap mechanism chapter 4 covered, consumed by
-a piece of cluster infrastructure rather than a user workload.
+**Why**: a Service's IP is stable, but nobody wants to write IPs into
+configuration. **CoreDNS**, the cluster's DNS server, resolves a
+Service's name, `services-demo-clusterip` or in full
+`services-demo-clusterip.default.svc.cluster.local`, to its IP. CoreDNS
+runs as an ordinary Deployment in `kube-system`. Its configuration, the
+**Corefile**, is stored in the `coredns` ConfigMap (chapter 4).
 
-**Example**: resolve the Service by name from inside the cluster, then
-look at where that configuration actually comes from:
+**Example**: look up the Service's name from inside the cluster, then
+look at the Corefile:
 
 ```
 kubectl run services-demo-dns-check --image=busybox:1.36 --restart=Never --rm -i --command -- nslookup services-demo-clusterip
 kubectl get configmap coredns -n kube-system -o jsonpath='{.data.Corefile}'
 ```
 
-**Expected output**: the fully-qualified name resolves to exactly the
-ClusterIP from the previous subsection:
+**Expected output**: the full name resolves to the Service's IP from
+the previous section:
 
 ```
 Server:    10.96.0.10
@@ -229,12 +189,12 @@ Name:  services-demo-clusterip.default.svc.cluster.local
 Address: 10.96.3.130
 ```
 
-And the Corefile actually driving that - an ordinary ConfigMap, editable
-the same way any ConfigMap is, though CoreDNS won't pick up a change
-until its Pods restart (`kubectl -n kube-system delete pod -l
-k8s-app=kube-dns` is the fast, deterministic way to force that; the
-`reload` plugin visible below also polls for changes periodically on its
-own):
+The Corefile is a list of plugins, each handling part of the work: the
+`kubernetes` plugin answers for cluster names, `forward` sends other
+names to the node's DNS servers, and so on. You can edit the ConfigMap
+like any other. The `reload` plugin picks up changes after a while;
+restarting the CoreDNS Pods (`kubectl -n kube-system delete pod -l
+k8s-app=kube-dns`) applies them straight away:
 
 ```
 .:53 {
@@ -255,30 +215,23 @@ own):
 }
 ```
 
-Names now resolve to ClusterIPs from inside the cluster; the next two
-subsections turn to the opposite problem - reaching a Service from
-outside it.
-
 ### NodePort: exposing a Service on every node's own IP
 
-**Why**: `NodePort` builds on `ClusterIP` (every `NodePort` Service gets
-a ClusterIP too) and additionally opens the same port on **every**
-node's IP, cluster-wide, in a fixed range (default 30000-32767) -
-useful when something outside the cluster needs to reach a Service
-without a cloud load balancer or Ingress controller in front. In kind
-specifically, that "every node's IP" is each node *container's* IP on
-the Docker bridge network, not the Docker host - so `curl
-localhost:<nodePort>` from the host does **not** work, a real point of
-confusion coming from a VM-based cluster where the node IP and a
-reachable host IP are the same thing. This repo's ingress hostPort setup
-(DESIGN.md, "Ingress: hostPort + node pinning") exists specifically
-because relying on NodePort reachability from the host doesn't work
-here.
+**Why**: a `NodePort` Service is a ClusterIP Service that is also
+reachable on one port, from the range 30000-32767 by default, on
+**every** node's IP. That's a way in from outside the cluster without a
+cloud load balancer or an Ingress controller.
 
-**Example**: `tutorial/examples/services-networking/nodeport-service.yaml`
-exposes the same backend as a NodePort. Try reaching it from the host
-directly (expected to fail), then two ways that actually work from
-outside a Pod's own network namespace:
+In kind, a node's IP is its Docker container's IP on the Docker
+network, not your host's. So `curl localhost:<nodePort>` on your host
+does **not** work. That's confusing if you're used to clusters on VMs,
+where the node's IP is one you can reach. It's also why this repo
+reaches ingress-nginx through ports published on one node container
+instead (DESIGN.md, "Ingress: hostPort + node pinning").
+
+**Example**: [`nodeport-service.yaml`](examples/services-networking/nodeport-service.yaml)
+exposes the same backend as a NodePort. Try it from your host, which
+fails, then two ways that work:
 
 ```
 kubectl apply -f tutorial/examples/services-networking/nodeport-service.yaml
@@ -289,9 +242,8 @@ curl -sS localhost:18080                                      # via port-forward
 docker exec <a-node-container> curl -sS localhost:<nodePort>  # via the node container itself - works
 ```
 
-**Expected output**: the direct host curl genuinely fails - not a typo,
-not a firewall issue, just that `localhost:<nodePort>` on the Docker
-host was never anything the NodePort setup touches:
+**Expected output**: the `curl` from your host fails, because nothing
+on your host listens on that port:
 
 ```
 NAME                     TYPE       CLUSTER-IP     EXTERNAL-IP   PORT(S)        AGE
@@ -301,10 +253,9 @@ $ curl -sS -m 3 localhost:32136
 curl: (7) Failed to connect to localhost:32136 after 0 ms: Could not connect to server
 ```
 
-Both of the other two paths reach real nginx content - `port-forward`
-tunnels straight to a Pod regardless of any port mapping, and the node
-*container* really does have the NodePort open on its own loopback,
-just not the Docker host's:
+The other two work. `port-forward` connects you straight to a Pod
+through the API server, and inside a node container the NodePort is
+open:
 
 ```
 $ kubectl port-forward svc/services-demo-nodeport 18080:80 &
@@ -318,19 +269,16 @@ $ docker exec k8s-lab-default-worker2 curl -sS -m 3 localhost:32136
 
 ### LoadBalancer: requesting a cloud load balancer kind can't provide
 
-**Why**: `LoadBalancer` builds on `NodePort` the same way `NodePort`
-builds on `ClusterIP` - it additionally asks whatever cloud provider
-integration is running in the cluster to provision an external load
-balancer and populate `status.loadBalancer`. kind has no such
-integration by default (no MetalLB, no cloud controller manager), so
-that provisioning step simply never happens - the Service object is
-valid and functions exactly like a `NodePort` underneath, it just sits
-waiting for an external IP that nothing will ever assign.
+**Why**: a `LoadBalancer` Service is a NodePort Service that also asks
+the cloud provider for an external load balancer, whose address is then
+written into the Service's `status.loadBalancer`. kind has nothing that
+provides load balancers (no cloud controller, no MetalLB), so the
+request is never fulfilled. The Service works as a NodePort, but its
+external IP stays `<pending>` for good.
 
-**Example**: this repo's own `ingress-nginx-controller` Service (applied
-by every profile's `manifests.txt`) is already `type: LoadBalancer` -
-real evidence already sitting in the cluster, not just this chapter's
-own demo object:
+**Example**: this repo's `ingress-nginx-controller` Service, installed by
+every profile, is already `type: LoadBalancer`. Look at it, then create
+one of your own:
 
 ```
 kubectl get svc -n ingress-nginx ingress-nginx-controller
@@ -338,12 +286,10 @@ kubectl apply -f tutorial/examples/services-networking/loadbalancer-service.yaml
 kubectl get svc services-demo-loadbalancer
 ```
 
-**Expected output**: `ingress-nginx-controller` has sat `<pending>` for
-this entire tutorial session (17h at time of capture) - it's not a
-transient startup state, it's permanent in this environment. The demo
-Service hits the identical state within seconds of being created, with
-a NodePort auto-assigned underneath exactly like the previous
-subsection:
+**Expected output**: `ingress-nginx-controller` has been `<pending>`
+since the cluster was created, 17 hours here: it won't change. The new
+Service is the same, with a NodePort assigned, as in the previous
+section:
 
 ```
 NAME                       TYPE           CLUSTER-IP     EXTERNAL-IP   PORT(S)                      AGE
@@ -353,28 +299,21 @@ NAME                         TYPE           CLUSTER-IP      EXTERNAL-IP   PORT(S
 services-demo-loadbalancer   LoadBalancer   10.96.211.147   <pending>     80:32718/TCP   12s
 ```
 
-That's the last of the IP-based Service types - the next one drops the
-virtual IP entirely in favor of a pure DNS-level indirection.
-
 ### ExternalName: a Service that's really just a DNS alias
 
-**Why**: every Service type covered so far has a `spec.selector`
-picking out real backend Pods and an EndpointSlice tracking their IPs.
-`ExternalName` has neither - it's a pure DNS-level indirection, a
-CNAME under a different name. Resolving `<name>.<namespace>.svc.
-cluster.local` returns a `CNAME` to whatever hostname
-`spec.externalName` names, not an IP CoreDNS looked up from an
-EndpointSlice at all. The use case that shape fits well: giving
-something outside the cluster (a managed database, a third-party API)
-an in-cluster name that looks and resolves like any other Service,
-so application config never has to hardcode the real external
-hostname - or the reverse, this chapter's example below, aliasing one
-in-cluster name onto another during a migration.
+**Why**: an `ExternalName` Service has no selector, no Pods and no IP.
+It's only a DNS alias: looking up its name returns a `CNAME` record
+pointing at the host name in `spec.externalName`. Use it to give
+something outside the cluster, such as a managed database, a name
+inside the cluster, so that applications don't have to contain the
+real host name. It also works the other way round, as in the example
+below: during a migration, one name inside the cluster can point at
+another.
 
-**Example**: `tutorial/examples/services-networking/externalname-service.yaml`
-points `services-demo-externalname` at this chapter's own
+**Example**: [`externalname-service.yaml`](examples/services-networking/externalname-service.yaml)
+points `services-demo-externalname` at
 `services-demo-clusterip.default.svc.cluster.local`, standing in for an
-external host without needing one:
+external host:
 
 ```
 kubectl apply -f tutorial/examples/services-networking/externalname-service.yaml
@@ -382,11 +321,9 @@ kubectl get svc services-demo-externalname
 kubectl run services-demo-externalname-check --image=busybox:1.36 --restart=Never --rm -i --command -- nslookup services-demo-externalname.default.svc.cluster.local
 ```
 
-**Expected output**: no `CLUSTER-IP` at all - `<none>`, not even the
-`<pending>` seen for `LoadBalancer` above, since there's no virtual IP
-to allocate for a pure alias - and the DNS answer is a literal `CNAME`
-record naming the real Service, resolved one hop further to that
-Service's actual ClusterIP:
+**Expected output**: `CLUSTER-IP` is `<none>`: there's no virtual IP.
+The DNS answer is a `CNAME` naming the other Service, which then
+resolves to that Service's IP:
 
 ```
 NAME                         TYPE           CLUSTER-IP   EXTERNAL-IP                                         PORT(S)   AGE
@@ -397,40 +334,32 @@ Name:	services-demo-clusterip.default.svc.cluster.local
 Address: 10.96.214.43
 ```
 
-kube-proxy is never involved here - there's no EndpointSlice, no
-virtual IP to program into any node's packet handling, just a CNAME
-CoreDNS returns straight from the Service object's spec. That's also
-its sharpest limitation: kube-proxy can front `ClusterIP`/`NodePort`/
-`LoadBalancer` with real IPs because it can see `spec.selector` and
-Endpoints, but a plain DNS client following a `CNAME` to a name outside
-`cluster.local` needs *its own* working DNS resolution to finish the
-lookup - `ExternalName` doesn't manufacture connectivity to something
-otherwise unreachable, it only saves in-cluster config from hardcoding
-which real hostname is behind an in-cluster-looking name.
+kube-proxy isn't involved: there's no virtual IP and no EndpointSlice,
+only a DNS answer from CoreDNS. That's also the limitation. If the
+target is outside the cluster, the client must be able to resolve and
+reach it itself. `ExternalName` only provides the name, not a
+connection.
 
-### Ingress: L7 routing on top of a Service
+### Ingress: HTTP routing to Services
 
-**Why**: a Service (any type above) is L4 (transport layer) - IPs and
-ports, no awareness of HTTP paths or hostnames. Running one
-`LoadBalancer` or `NodePort` per application doesn't scale past a
-handful of services, and doesn't give you host/path-based routing at
-all. Ingress is a separate API for
-exactly that: rules mapping hostnames/paths to backend Services, with
-TLS termination, all fronted by a single entry point. Critically, an
-`Ingress` **object** is inert on its own - it does nothing without a
-running **Ingress Controller** watching for it (the same "the object is
-just declared state, a controller does the work" pattern as everything
-else in this tutorial). This repo already runs one: ingress-nginx,
-applied via `manifests/ingress/ingress-nginx.yaml`, node-pinned per
-DESIGN.md's "Ingress: hostPort + node pinning" so it's actually reachable
-at `localhost:80` on the Docker host. `spec.ingressClassName` (not the
-old `kubernetes.io/ingress.class` annotation, deprecated since 1.18/1.22
-and no longer read) is what ties an `Ingress` object to a specific
-controller when more than one might be running - here, `nginx`, matching
-the `IngressClass` that manifest creates.
+**Why**: Services work with IP addresses and ports (layer 4). They know
+nothing about HTTP paths or host names. One `NodePort` or
+`LoadBalancer` per application quickly gets unwieldy. **Ingress** is a
+separate API for HTTP (layer 7): rules that send requests to Services
+by host name and path, with TLS if needed, all through one entry point.
 
-**Example**: `tutorial/examples/services-networking/ingress.yaml` routes
-`/` to `services-demo-clusterip`:
+An Ingress object does nothing by itself. An **Ingress controller**
+watches Ingress objects and does the routing, the same pattern as
+every other controller in this tutorial. This repo runs ingress-nginx
+(`manifests/ingress/ingress-nginx.yaml`), set up so you can reach it at
+`localhost:80` on your host (DESIGN.md, "Ingress: hostPort + node
+pinning"). `spec.ingressClassName` says which controller handles an
+Ingress, here `nginx`. Older material uses the
+`kubernetes.io/ingress.class` annotation instead, which is no longer
+read.
+
+**Example**: [`ingress.yaml`](examples/services-networking/ingress.yaml)
+sends `/` to `services-demo-clusterip`:
 
 ```
 kubectl apply -f tutorial/examples/services-networking/ingress.yaml
@@ -438,10 +367,8 @@ kubectl get ingress services-demo-ingress
 curl -sS localhost/
 ```
 
-**Expected output**: `CLASS` populates correctly from
-`ingressClassName`, and the full path - Ingress -> ingress-nginx ->
-ClusterIP Service -> Pod - actually works, real nginx content served
-back through port 80 on the Docker host:
+**Expected output**: `CLASS` is `nginx`, and the request goes all the way
+through: your host's port 80, ingress-nginx, the Service, a Pod:
 
 ```
 NAME                    CLASS   HOSTS   ADDRESS   PORTS   AGE
@@ -451,44 +378,30 @@ $ curl -sS -m 5 localhost/
 <!DOCTYPE html>...<title>Welcome to nginx!</title>...
 ```
 
-`ADDRESS` stays blank even after nearly 30 seconds, and that's expected
-here rather than something slow to propagate: ingress-nginx populates it
-from its own controller Service's load-balancer status, and that Service
-is the same one this chapter's LoadBalancer subsection just showed
-sitting `<pending>` indefinitely. No cloud IP ever arrives for the
-controller itself, so no `ADDRESS` ever arrives on any Ingress it's
-serving, no matter how long you wait - worth knowing so a blank
-`ADDRESS` column doesn't get mistaken for something broken when `curl`
-already proves the routing itself works.
+`ADDRESS` stays empty, and that's expected. ingress-nginx copies it
+from its own Service's external IP, which is the `<pending>`
+LoadBalancer from earlier. It never gets one here, so `ADDRESS` stays
+empty however long you wait. The `curl` shows that routing works
+anyway.
 
 ### Extending the Corefile: the `rewrite` plugin
 
-**This section is optional.** It comes back to CoreDNS (introduced
-earlier in this chapter) after all four Service types and Ingress have
-been covered, since it's a CoreDNS-configuration detour rather than
-another Service type of its own - nothing later in this tutorial
-depends on it.
+**This section is optional.** Nothing later in the tutorial depends on
+it.
 
-**Why**: the CoreDNS Corefile shown earlier in this chapter is a plugin
-chain, evaluated top to bottom per query, and `rewrite` is a plugin
-like any other in it - it can rewrite an incoming query's name before
-the `kubernetes` plugin ever sees it, and (with `answer name`) rewrite
-the *response* name back before it reaches the client. A concrete use:
-aliasing an old Service name to a new one during a rename or migration,
-so clients that still ask for the old name keep working without every
-one of them being updated in lockstep with the rename. This is a
-cluster-wide DNS-layer alias, evaluated for every query CoreDNS handles
-- different from this chapter's `ExternalName` Service above, which is
-one specific object a client has to already know to ask for.
+**Why**: the Corefile is a chain of plugins that each query passes
+through from top to bottom. The `rewrite` plugin can change the name in
+a query before the `kubernetes` plugin sees it, and, with
+`answer name`, change it back in the response. One use is to keep an
+old Service name working after a rename, so clients can be updated one
+at a time. Unlike an `ExternalName` Service, it applies to every query
+CoreDNS answers.
 
-**Example**: `tutorial/examples/services-networking/corefile-rewrite.txt`
-adds one `rewrite` block ahead of the existing `kubernetes` plugin,
-aliasing a `legacy-backend` name onto the real
-`services-demo-clusterip` Service used throughout this chapter (back up
-the live Corefile first - unlike this tutorial's other ConfigMaps, this
-one ships with the cluster itself rather than being an example object
-this repo creates, so there's nothing else to reapply if it's worth
-keeping the stock version around):
+**Example**: [`corefile-rewrite.txt`](examples/services-networking/corefile-rewrite.txt)
+adds a `rewrite` rule before the `kubernetes` plugin, which makes the
+name `legacy-backend` resolve to `services-demo-clusterip`. The
+`coredns` ConfigMap comes with the cluster, so save a copy of the
+original first:
 
 ```
 kubectl get configmap coredns -n kube-system -o jsonpath='{.data.Corefile}' > /tmp/coredns-corefile-original.txt
@@ -499,14 +412,11 @@ kubectl -n kube-system delete pod -l k8s-app=kube-dns
 kubectl run services-demo-rewrite-check --image=busybox:1.36 --restart=Never --rm -i --command -- nslookup legacy-backend.default.svc.cluster.local
 ```
 
-**Expected output**: `legacy-backend.default.svc.cluster.local` was
-never created as a Service or anything else - it only resolves at all
-because of the rewrite rule, and it resolves straight to
-`services-demo-clusterip`'s real ClusterIP, no CNAME visible in the
-answer (the `answer name` line is what rewrites the *response* name
-back to what was asked, rather than leaving a
-`legacy-backend...  CNAME  services-demo-clusterip...` chain the way
-`ExternalName` does above):
+**Expected output**: no Service called `legacy-backend` exists, but the
+name resolves, because of the rewrite rule, to
+`services-demo-clusterip`'s IP. There's no `CNAME` in the answer:
+`answer name` changed the name in the response back to the one you
+asked for:
 
 ```
 Server:		10.96.0.10
@@ -516,8 +426,7 @@ Name:	legacy-backend.default.svc.cluster.local
 Address: 10.96.214.43
 ```
 
-Restore the stock Corefile the same way, from the backup taken above,
-once done experimenting:
+When you're done, restore the original Corefile from your copy:
 
 ```
 kubectl create configmap coredns -n kube-system --from-file=Corefile=/tmp/coredns-corefile-original.txt --dry-run=client -o yaml | kubectl apply -f -
