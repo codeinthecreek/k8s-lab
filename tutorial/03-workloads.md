@@ -44,10 +44,12 @@ worker the scheduler picked:
 
 ```
 pod/workloads-demo-pod created
-
-NAME                 READY   STATUS    RESTARTS   AGE   IP            NODE
-workloads-demo-pod   1/1     Running   0          40s   10.244.2.3    k8s-lab-default-worker2
+NAME                 READY   STATUS    RESTARTS   AGE   IP            NODE                      NOMINATED NODE   READINESS GATES
+workloads-demo-pod   1/1     Running   0          10s   10.244.1.34   k8s-lab-default-worker2   <none>           <none>
 ```
+
+(On a new cluster, the first `get` may show `ContainerCreating` while
+the `nginx:1.27` image is pulled. Run it again after a few seconds.)
 
 ### Why you rarely create a Pod on its own
 
@@ -67,35 +69,38 @@ That missing piece is what ReplicaSets and Deployments add.
 and compare:
 
 ```
-kubectl get pod workloads-demo-pod
 kubectl exec workloads-demo-pod -- sh -c "kill 1"
-# poll: kubectl get pod workloads-demo-pod
-kubectl delete pod workloads-demo-pod
 kubectl get pod workloads-demo-pod
 ```
 
-**Expected output**: after `kill 1` stops nginx, the main process
-(PID 1) in the container, `RESTARTS` goes up on the *same* Pod. The
-name is the same and `AGE` keeps counting: the kubelet restarted the
-container, and the Pod was never replaced:
+Right after the `kill`, the container has stopped:
 
 ```
-NAME                 READY   STATUS    RESTARTS   AGE
-workloads-demo-pod   1/1     Running   0           45s
+NAME                 READY   STATUS      RESTARTS   AGE
+workloads-demo-pod   0/1     Completed   0          11s
+```
 
-$ kubectl exec workloads-demo-pod -- sh -c "kill 1"
+Run the `get` again a few seconds later.
 
-NAME                 READY   STATUS         RESTARTS      AGE
-workloads-demo-pod   1/1     Running        1 (9s ago)    54s
+**Expected output**: `RESTARTS` has gone up on the *same* Pod. The name
+is the same and `AGE` keeps counting: the kubelet restarted the
+container (nginx, the main process, PID 1), and the Pod was never
+replaced:
+
+```
+NAME                 READY   STATUS    RESTARTS      AGE
+workloads-demo-pod   1/1     Running   1 (10s ago)   20s
 ```
 
 Deleting the Pod is different: it stays gone:
 
 ```
-$ kubectl delete pod workloads-demo-pod
-pod "workloads-demo-pod" deleted from default namespace
+kubectl delete pod workloads-demo-pod
+kubectl get pod workloads-demo-pod
+```
 
-$ kubectl get pod workloads-demo-pod
+```
+pod "workloads-demo-pod" deleted from default namespace
 Error from server (NotFound): pods "workloads-demo-pod" not found
 ```
 
@@ -115,37 +120,56 @@ new Pods or takes over the old ones:
 
 ```
 kubectl apply -f tutorial/examples/workloads/replicaset.yaml
-kubectl delete rs workloads-demo-rs --cascade=orphan
-kubectl get pods -l app=workloads-demo-rs
-kubectl apply -f tutorial/examples/workloads/replicaset.yaml
-kubectl get pods -l app=workloads-demo-rs -o custom-columns=NAME:.metadata.name,AGE:.metadata.creationTimestamp
+kubectl get pods -l app=workloads-demo-rs -o custom-columns=NAME:.metadata.name,CREATED:.metadata.creationTimestamp
 ```
 
-**Expected output**: the same 3 Pods throughout. They keep running
-without a ReplicaSet, and the new ReplicaSet takes them over instead of
+`-o custom-columns` prints just the columns you name, here each Pod's
+name and creation time:
+
+```
+replicaset.apps/workloads-demo-rs created
+NAME                      CREATED
+workloads-demo-rs-44mw6   2026-11-19T11:56:29Z
+workloads-demo-rs-6lj9h   2026-11-19T11:56:29Z
+workloads-demo-rs-bl9q6   2026-11-19T11:56:29Z
+```
+
+Delete the ReplicaSet but keep its Pods, then list them:
+
+```
+kubectl delete rs workloads-demo-rs --cascade=orphan
+kubectl get pods -l app=workloads-demo-rs
+```
+
+```
+replicaset.apps "workloads-demo-rs" deleted from default namespace
+NAME                      READY   STATUS    RESTARTS   AGE
+workloads-demo-rs-44mw6   1/1     Running   0          9s
+workloads-demo-rs-6lj9h   1/1     Running   0          9s
+workloads-demo-rs-bl9q6   1/1     Running   0          9s
+```
+
+Apply the same ReplicaSet again, and look at the Pods and the
+ReplicaSet:
+
+```
+kubectl apply -f tutorial/examples/workloads/replicaset.yaml
+kubectl get pods -l app=workloads-demo-rs -o custom-columns=NAME:.metadata.name,CREATED:.metadata.creationTimestamp
+kubectl get rs workloads-demo-rs
+```
+
+**Expected output**: the same 3 Pods throughout. They kept running
+without a ReplicaSet, and the new ReplicaSet took them over instead of
 creating new ones:
 
 ```
-$ kubectl get pods -l app=workloads-demo-rs -o custom-columns=NAME:...,AGE:...
-workloads-demo-rs-clsqq   2026-08-28T03:49:54Z
-workloads-demo-rs-l8h7v   2026-08-28T03:49:54Z
-workloads-demo-rs-zgzbd   2026-08-28T03:49:54Z
-
-$ kubectl delete rs workloads-demo-rs --cascade=orphan
-replicaset.apps "workloads-demo-rs" deleted from default namespace
-
-$ kubectl get pods -l app=workloads-demo-rs
-workloads-demo-rs-clsqq   1/1   Running   0   44s
-workloads-demo-rs-l8h7v   1/1   Running   0   44s
-workloads-demo-rs-zgzbd   1/1   Running   0   44s
-
-$ kubectl apply -f tutorial/examples/workloads/replicaset.yaml
 replicaset.apps/workloads-demo-rs created
-
-$ kubectl get pods -l app=workloads-demo-rs -o custom-columns=NAME:...,AGE:...
-workloads-demo-rs-clsqq   2026-08-28T03:49:54Z
-workloads-demo-rs-l8h7v   2026-08-28T03:49:54Z
-workloads-demo-rs-zgzbd   2026-08-28T03:49:54Z
+NAME                      CREATED
+workloads-demo-rs-44mw6   2026-11-19T11:56:29Z
+workloads-demo-rs-6lj9h   2026-11-19T11:56:29Z
+workloads-demo-rs-bl9q6   2026-11-19T11:56:29Z
+NAME                DESIRED   CURRENT   READY   AGE
+workloads-demo-rs   3         3         3       2s
 ```
 
 The names and creation times are the same before and after. The new
@@ -181,25 +205,25 @@ kubectl rollout history deployment/workloads-demo-deploy
 ```
 
 **Expected output**: Pods are replaced one at a time (the default
-`RollingUpdate` strategy). Afterwards there are two ReplicaSets: the
-new one, and the old one scaled to zero. The old one is kept so that
-`kubectl rollout undo` can go back to it:
+`RollingUpdate` strategy); `rollout status` reports progress until it's
+done, repeating lines while it waits (shortened here). Afterwards there
+are two ReplicaSets: the new one, and the old one scaled to zero. The
+old one is kept so that `kubectl rollout undo` can go back to it:
 
 ```
 deployment.apps/workloads-demo-deploy created
 deployment.apps/workloads-demo-deploy annotated
 deployment.apps/workloads-demo-deploy image updated
-
 Waiting for deployment spec update to be observed...
+Waiting for deployment "workloads-demo-deploy" rollout to finish: 0 out of 3 new replicas have been updated...
 Waiting for deployment "workloads-demo-deploy" rollout to finish: 1 out of 3 new replicas have been updated...
 Waiting for deployment "workloads-demo-deploy" rollout to finish: 2 out of 3 new replicas have been updated...
 Waiting for deployment "workloads-demo-deploy" rollout to finish: 1 old replicas are pending termination...
 deployment "workloads-demo-deploy" successfully rolled out
-
-NAME                                DESIRED   CURRENT   READY   AGE
-workloads-demo-deploy-5f48cd94b9   3         3         3       85s
-workloads-demo-deploy-75bf95bd74   0         0         0       95s
-
+NAME                               DESIRED   CURRENT   READY   AGE
+workloads-demo-deploy-5f48cd94b9   3         3         3       80s
+workloads-demo-deploy-75bf95bd74   0         0         0       81s
+deployment.apps/workloads-demo-deploy
 REVISION  CHANGE-CAUSE
 1         bump nginx to 1.28
 2         bump nginx to 1.28
@@ -211,8 +235,9 @@ too, as well as to revision 2. Adding it before the change gets it
 onto the new revision, but it may end up on the old one as well.
 
 Older material uses `kubectl set image ... --record` to fill in the
-change cause. `--record` is deprecated; use `kubectl annotate` as
-above.
+change cause. `--record` is deprecated: it still works, but prints
+`Flag --record has been deprecated, --record will be removed in the
+future`. Use `kubectl annotate` as above.
 
 Does running the same `set image` command again create another
 revision?
@@ -223,15 +248,14 @@ kubectl rollout history deployment/workloads-demo-deploy
 ```
 
 ```
-(no output - exit 0)
-
+deployment.apps/workloads-demo-deploy
 REVISION  CHANGE-CAUSE
 1         bump nginx to 1.28
 2         bump nginx to 1.28
 ```
 
-No. `kubectl set image` compares the new image with the current one,
-and if they're the same, it does nothing and prints nothing. A script
+No, and `set image` printed nothing at all. It compares the new image
+with the current one, and if they're the same, it does nothing. A script
 that expects a new revision every time it runs won't get one, and
 won't see an error either.
 
@@ -252,5 +276,6 @@ Pods can take a few seconds to stop. Check that nothing is left:
 kubectl get rs,pods -l 'app in (workloads-demo-rs, workloads-demo-deploy)'
 ```
 
-When it says `No resources found in default namespace.`, the chapter is
+(`-l 'app in (...)'` is a set-based selector: it matches either
+label value.) When it says `No resources found in default namespace.`, the chapter is
 cleaned up.
