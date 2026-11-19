@@ -1,18 +1,16 @@
 # 1. Cluster architecture
 
-A Kubernetes cluster is a set of machines (nodes) split into two roles:
-control plane and worker. This chapter covers what each role's
-components actually do and how kind maps that model onto Docker
-containers running on a single host. Everything later in this tutorial -
-the API model, workloads, networking - is something one of these
-components implements, so it's worth having the mental map before
-looking at any object spec.
+A Kubernetes cluster is a set of machines, called **nodes**, in two
+roles: the **control plane** and the **workers**. This chapter covers
+what runs in each role, and how kind turns that into Docker containers
+on one machine. Everything in later chapters, from the API to
+networking, is done by one of these components, so it helps to know
+them before looking at any objects.
 
 ### Bringing up the cluster
 
-The examples in this chapter run against a live cluster, so start one
-first. From the repo root, with Docker running and `kind` and `kubectl`
-installed:
+The examples need a running cluster. From the repo root, with Docker
+running and `kind` and `kubectl` installed:
 
 ```
 make up
@@ -20,89 +18,82 @@ make up
 
 This creates the `default` profile: one control-plane node and two
 workers, as Docker containers named `k8s-lab-default-control-plane`,
-`k8s-lab-default-worker`, and `k8s-lab-default-worker2`. Once it
-finishes, confirm the cluster is reachable:
+`k8s-lab-default-worker` and `k8s-lab-default-worker2`. When it has
+finished, check that the cluster responds:
 
 ```
 make status
 ```
 
-Commands later in this chapter that use `docker exec` take one of those
-container names. If you're unsure what yours are called (for instance
-on another profile), `docker ps --format '{{.Names}}'` lists them.
+Commands in this chapter that use `docker exec` need one of those
+container names. On another profile, `docker ps --format '{{.Names}}'`
+lists them.
 
 ### Control plane and worker: what each role runs
 
-**Why**: Kubernetes splits "decide what should happen" from "make it
-happen." The control plane holds cluster state and makes scheduling and
-reconciliation decisions; worker nodes run the actual application
-containers and report status back. This separation is what lets you add
-or lose worker capacity without touching the components that hold
-cluster state, and what lets the control plane itself be replicated
-independently of workload placement (see chapter 12).
+**Why**: Kubernetes separates deciding what should happen from doing
+it. The control plane holds the cluster's state and makes the
+decisions: where to run things, what to fix. The workers run the
+application containers and report back. Because of that split, you can
+add or lose workers without touching the components that hold the
+state, and the control plane can be replicated on its own (chapter
+12).
 
-A control-plane node runs four components, each a separate process. All
-four exist to serve etcd, the cluster's single source of truth for
-state: kube-apiserver is the only one allowed to read or write it
-directly, and the other two watch it through kube-apiserver and act on
-what they see:
+A control-plane node runs four components, each a separate program.
+**etcd** holds the state; **kube-apiserver** is the only component that
+reads and writes it; the other two watch the state through
+kube-apiserver and act on it:
 
-- **kube-apiserver** - the only component that talks to etcd directly.
-  Every other component, and every `kubectl` command, goes through it.
-  It validates and persists API objects and does nothing else - no
-  scheduling logic, no reconciliation logic.
-- **etcd** - the cluster's key-value store. Every API object's current
-  state lives here. Nothing else in the cluster stores authoritative
-  state; components reconstruct their view by reading from the
-  apiserver, which reads from etcd.
-- **kube-scheduler** - watches for Pods with no node assigned and picks
-  one, based on resource requests, taints/tolerations, affinity rules
-  (chapter 7). It only decides *where* a Pod should run - it doesn't run
-  anything itself.
-- **kube-controller-manager** - runs the built-in control loops (Node
-  controller, ReplicaSet controller, Job controller, and others) that
-  watch the apiserver and act to move observed state toward desired
-  state. A Deployment scaling a ReplicaSet up or down (chapter 3) is one
-  of these loops in action.
+- **kube-apiserver**: the only component that talks to etcd. Every
+  other component, and every `kubectl` command, goes through it. It
+  checks and stores API objects, and that's all: it doesn't schedule
+  or fix anything.
+- **etcd**: the cluster's key-value store, holding the current state of
+  every API object. No other component keeps its own authoritative
+  copy; they all read the state through the API server.
+- **kube-scheduler**: finds Pods that haven't been assigned a node yet,
+  and picks one for each, based on resource requests, taints and
+  affinity rules (chapter 7). It only decides *where* a Pod runs; it
+  doesn't run anything.
+- **kube-controller-manager**: runs the built-in **controllers**
+  (for Nodes, ReplicaSets, Jobs and more). Each one watches the API
+  server and works to make the actual state match the desired state. A
+  Deployment scaling a ReplicaSet up or down (chapter 3) is one of
+  them at work.
 
 A worker node runs two components:
 
-- **kubelet** - the per-node agent. It watches the apiserver for Pods
-  assigned to its node, tells the container runtime to start/stop
-  containers accordingly, and reports node and Pod status back.
-  Notably, kubelet is also what runs *control-plane* components
-  themselves - see "Static pods" below.
-- **kube-proxy** - programs each node's networking rules (iptables or
-  IPVS, depending on configuration) to implement Service IPs (chapter
-  5). It doesn't proxy traffic through userspace in modern
-  configurations; it programs the kernel's packet handling and gets out
-  of the way.
+- **kubelet**: the agent on each node. It watches the API server for
+  Pods assigned to its node, tells the container runtime to start and
+  stop their containers, and reports the status of the node and its
+  Pods. The kubelet also runs the control-plane components themselves;
+  see "Static pods" below.
+- **kube-proxy**: sets up each node's network rules (iptables or IPVS)
+  so that Service IPs work (chapter 5). It doesn't pass the traffic
+  through itself: it programs the kernel, which handles the packets.
 
-Both roles also run a **container runtime** (containerd, in kind's case
-- verified via `containerd --version` inside a node container, currently
-`v2.3.1`) and a **CNI** (Container Network Interface) plugin, which
-provisions networking for each Pod - covered in chapter 5.
+Every node also runs a **container runtime**, which actually starts and
+stops containers (containerd, in kind), and a **CNI** (Container
+Network Interface) plugin, which sets up each Pod's network (chapter
+5).
 
 ### Static pods: how the control plane bootstraps itself
 
-**Why**: kube-apiserver, etcd, kube-scheduler, and kube-controller-manager
-are themselves programs that need to be started and kept running - but
-at cluster bootstrap, there's no functioning apiserver yet to schedule
-Pods onto anything. kubeadm resolves this by having kubelet manage these
-four components directly from static files, independent of the API
-server entirely.
+**Why**: the four control-plane components are programs that something
+has to start and keep running. But when a cluster is first set up,
+there's no API server yet to create Pods through. kubeadm, the tool
+kind uses to set up clusters, solves this by having the kubelet run the
+four components directly from files on disk, without the API
+server.
 
-**Example**: on any control-plane node, kubelet is configured to watch a
-manifest directory and run whatever Pod specs it finds there, without an
-apiserver in the loop (`k8s-lab-default-control-plane` is the
-control-plane node's container name on the `default` profile; find
-yours with `docker ps`):
+**Example**: on a control-plane node, the kubelet watches a directory of
+Pod manifests and runs whatever it finds there:
 
 ```
 docker exec k8s-lab-default-control-plane ls /etc/kubernetes/manifests/
 ```
 
-**Expected output**: four files, one per control-plane component:
+**Expected output**: one file per control-plane component:
 
 ```
 etcd.yaml
@@ -111,41 +102,36 @@ kube-controller-manager.yaml
 kube-scheduler.yaml
 ```
 
-These show up in `kubectl get pods -n kube-system` as ordinary-looking
-Pods (`etcd-<node-name>`, `kube-apiserver-<node-name>`, etc.), which is a
-common point of confusion - they are not scheduled by kube-scheduler and
-have no controller managing replicas. If you edit or delete one, kubelet
-notices the manifest file directly and restarts the process from it; the
-apiserver only finds out about the change after the fact, by kubelet
-mirroring the static pod's status as a regular Pod object it can be
-observed through. There is no failure mode here worth demonstrating by
-breaking a manifest on a single-node lab - doing so takes down the
-apiserver itself.
+These **static pods** appear in `kubectl get pods -n kube-system` like
+other Pods (`etcd-<node-name>`, `kube-apiserver-<node-name>` and so
+on), which can be confusing: the scheduler didn't place them and no
+controller manages them. The kubelet runs them from the files, and
+creates a read-only copy of each in the API (a *mirror Pod*) so that
+you can see them. If you change or delete a file, the kubelet acts on
+it directly; the API server only sees the result. Don't try this on a
+cluster with one control-plane node: breaking the API server's file
+takes the API server down.
 
 ### kind's node-as-container model
 
-**Why**: kind's central trick is running each "node" as a Docker
-container rather than a VM, with systemd and a container runtime
-installed inside that container - a container that itself runs
-containers. This is why a full multi-node cluster, or even multiple
-independent clusters (this repo's profiles), can start in seconds
-locally rather than minutes, and why `docker exec` and `docker logs`
-work directly against a "node" the same way they'd work against any
-other container.
+**Why**: kind runs each node as a Docker container instead of a virtual
+machine. Inside each container are systemd, the kubelet and a container
+runtime: a container that runs containers. That's why a whole
+multi-node cluster, or several (this repo's profiles), can start in
+seconds, and why `docker exec` and `docker logs` work on a node like on
+any other container.
 
-**Example**: with the `default` profile up, compare kind's view of the
-cluster against Docker's:
+**Example**: compare Kubernetes's view of the nodes with Docker's:
 
 ```
 kubectl get nodes -o wide
 docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Ports}}'
 ```
 
-**Expected output**: one Docker container per Kubernetes node, sharing a
-single Docker bridge network (`kind`) with the control-plane node's
-container publishing host ports for the components that need to be
-reachable from outside the cluster (here, 80/443 for ingress - see
-chapter 5):
+**Expected output**: one Docker container per node, all on one Docker
+network (`kind`). Only the control-plane container publishes ports on
+your host: 80 and 443 for ingress (chapter 5), and the API server's
+port:
 
 ```
 NAME                            STATUS   ROLES           VERSION
@@ -159,26 +145,22 @@ k8s-lab-default-control-plane    kindest/node:v1.36.1    0.0.0.0:80->80/tcp, 0.0
 k8s-lab-default-worker           kindest/node:v1.36.1
 ```
 
-Each node container's PID 1 is `systemd` (`docker exec
-k8s-lab-default-control-plane ps -o pid,comm --no-headers -p 1` returns
-`1 systemd`), which is what makes kubelet-as-a-systemd-service work the
-same way it would on a real VM - kind isn't faking process supervision,
-it's running the real thing one layer down. The practical consequence:
-"a node going away" and "a container going away" are the same event in
-kind (`docker stop <node-container>` is a valid, real way to simulate
-node failure - see chapter 12), which doesn't hold on a real cluster
-where a node is a whole machine.
+Each node container's first process, PID 1, is `systemd`, as on a real
+machine, and the kubelet runs as a systemd service under it. The
+practical consequence: in kind, a node going away and a container going
+away are the same thing. `docker stop <node-container>` is a real way
+to simulate a node failure (chapter 12). On a real cluster, a node is a
+whole machine.
 
 ### Control-plane scheduling exclusion
 
-**Why**: running application workloads on the same node that hosts
-etcd and the apiserver would let a noisy or misbehaving workload starve
-the components the whole cluster depends on. kubeadm (and therefore
-kind) taints every control-plane node on creation so that ordinary Pods
-aren't scheduled there by default, without making the node unusable for
-anything - DaemonSets (a workload that runs one Pod per node rather than
-a chosen replica count; chapter 6 covers them fully) that tolerate the
-taint (kindnet, kube-proxy) still run on it.
+**Why**: if applications ran on the node that hosts etcd and the API
+server, one misbehaving application could starve the components the
+whole cluster depends on. So kubeadm, and therefore kind, gives every
+control-plane node a **taint** when it's created, which keeps ordinary
+Pods off it. Pods that *tolerate* the taint can still run there, such
+as the kindnet and kube-proxy Pods, which a DaemonSet runs on every
+node (chapter 6).
 
 **Example**:
 
@@ -193,11 +175,10 @@ Taints:             node-role.kubernetes.io/control-plane:NoSchedule
 Unschedulable:      false
 ```
 
-This is a `NoSchedule` taint specifically (chapter 7 covers taint
-effects in full) - it blocks new Pods from being placed there but
-doesn't evict anything already running. It's why the `default` profile's
-two worker nodes end up hosting ordinary workloads while the
-control-plane node doesn't, by design rather than by accident. If you
-ever see a Pod stuck `Pending` with an event like `0/3 nodes are
-available: 1 node(s) had untolerated taint...`, this taint - or one like
-it - is almost always why.
+`NoSchedule` stops new Pods from being placed on the node, but doesn't
+remove Pods already running there (chapter 7 covers taints in full).
+That's why, in the `default` profile, ordinary workloads run on the two
+workers and not on the control-plane node. If a Pod is stuck
+`Pending` with an event like `0/3 nodes are available: 1 node(s) had
+untolerated taint...`, this taint, or one like it, is usually part of
+the reason.
