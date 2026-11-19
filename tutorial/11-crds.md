@@ -1,31 +1,31 @@
 # 11. Extending the API: CRDs
 
-Chapter 10's diagnostic techniques - events, logs, `describe` output -
-worked because every object involved is built into the apiserver and
-reconciled by a controller running inside `kube-controller-manager`,
-same as every other object covered so far (Pods, Deployments, Services,
-even Jobs). A CustomResourceDefinition (CRD) is how you register an
-entirely new type the same way, without recompiling anything: a plain
-manifest that teaches the apiserver a new `apiVersion`/`kind`, storage
-for it, and (if you write one) a controller to watch and act on it.
-This chapter treats CRDs as the generalization of the object model
-chapter 2 introduced, not a separate feature bolted on top of it - which
-is exactly why chapter 10's techniques carry over unchanged to a `kind`
-you registered yourself.
+Every object type so far, from Pods to Jobs, is built into the
+apiserver, and a controller inside `kube-controller-manager` acts on it.
+A **CustomResourceDefinition** (CRD) lets you add a new type of your
+own, without changing or rebuilding anything. You apply a manifest that
+tells the apiserver about a new `apiVersion` and `kind`, and the
+apiserver stores objects of that type like any other. If you want
+something to *happen* when those objects change, you also write a
+controller.
+
+A custom type follows the same object model as the built-in ones
+(chapter 2). So everything you already know carries over: `kubectl get`,
+`describe`, `apply` and `delete` work on it, and chapter 10's ways of
+finding out what's wrong apply to it too.
 
 ### Custom resources: the same object model, a new type
 
-**Why**: a CRD's own manifest is itself a Kubernetes object
-(`apiVersion: apiextensions.k8s.io/v1`, `kind:
-CustomResourceDefinition`) - registering it teaches the apiserver a new
-type, after which instances of that type are created, listed, and
-deleted exactly like any built-in object: same `apiVersion`/`kind`/
-`metadata`/`spec` shape (chapter 2), same `kubectl apply`/`get`/
-`describe`/`delete` verbs, same declarative model throughout.
+**Why**: a CRD is itself a Kubernetes object
+(`apiVersion: apiextensions.k8s.io/v1`, `kind: CustomResourceDefinition`).
+Once it's registered, objects of the new type have the usual
+`apiVersion`, `kind`, `metadata` and `spec` (chapter 2), and you create,
+list and delete them with the usual `kubectl` commands.
 
-**Example**: register the `CronTab` type
-(`tutorial/examples/crds/crontab-crd.yaml`), then create an instance of
-it (`tutorial/examples/crds/crontab-instance.yaml`):
+**Example**: [`crontab-crd.yaml`](examples/crds/crontab-crd.yaml)
+registers a type called `CronTab`, and
+[`crontab-instance.yaml`](examples/crds/crontab-instance.yaml) creates
+one:
 
 ```
 kubectl apply -f tutorial/examples/crds/crontab-crd.yaml
@@ -35,9 +35,8 @@ kubectl get crontabs
 kubectl get ct
 ```
 
-**Expected output**: the CRD registers immediately, and once it does,
-`crontabs` behaves like any other resource - including its
-`shortNames` entry working exactly like `po` does for Pods:
+**Expected output**: the new type works at once, like any other
+resource. Even its short name, `ct`, works the way `po` does for Pods:
 
 ```
 $ kubectl apply -f tutorial/examples/crds/crontab-crd.yaml
@@ -59,38 +58,33 @@ NAME                    AGE
 tutorial-demo-crontab   0s
 ```
 
-No printer columns were configured on the CRD, so `kubectl get` falls
-back to the generic NAME/AGE view - a CRD can define
-`additionalPrinterColumns` to surface fields like `cronSpec` here, but
-that's cosmetic, not part of the core mechanism this chapter covers.
+`kubectl get` shows only `NAME` and `AGE` because the CRD doesn't say
+which other columns to print. A CRD can add columns, for example for
+`cronSpec`, with `additionalPrinterColumns`, but that's only about
+display.
 
 ### A CRD alone is inert - no controller, no behavior
 
-**Why**: registering a type and storing instances of it is all a CRD
-does by itself. Nothing watches `spec.cronSpec` and actually schedules
-anything - that requires a separate controller (an operator) running
-somewhere, watching the type via the API and taking action, the same
-role `kube-controller-manager`'s built-in controllers play for
-ReplicaSets and Jobs (ReplicaSets - chapter 3; Jobs - chapter 6). A `CronTab` object with no controller
-watching it just sits in etcd as structured data, forever, exactly as
-created.
+**Why**: a CRD only defines a type and stores objects of it. Nothing
+reads `spec.cronSpec` and runs anything on that schedule. For that you
+need a controller (often called an *operator*): a program that watches
+objects of the type through the API and acts on them, as
+`kube-controller-manager`'s built-in controllers do for ReplicaSets
+(chapter 3) and Jobs (chapter 6). Without one, a `CronTab` is just data
+stored in etcd, unchanged.
 
-**Example**: the `tutorial-demo-crontab` object created above has no
-controller watching `crontabs.example.com` anywhere in this cluster -
-confirm nothing acts on it over time, unlike chapter 6's CronJob (which
-has a real controller built into `kube-controller-manager`):
+**Example**: no controller in this cluster watches `CronTab` objects.
+Check whether anything has acted on the one created above:
 
 ```
 kubectl get crontab tutorial-demo-crontab -o jsonpath='{.status}'
 kubectl get events --field-selector involvedObject.name=tutorial-demo-crontab
 ```
 
-**Expected output**: nothing - `status` is empty and there are no
-events, because no controller in this cluster is watching
-`crontabs.example.com`. Contrast this with chapter 6's CronJob, whose
-`status` fills in with `lastScheduleTime` and whose Job history rotates
-on its own, entirely because a real controller inside
-`kube-controller-manager` is reconciling it:
+**Expected output**: nothing. `status` is empty and there are no
+events. Compare chapter 6's CronJob: its `status` fills in with
+`lastScheduleTime` and its Jobs come and go, because a controller in
+`kube-controller-manager` acts on it:
 
 ```
 $ kubectl get crontab tutorial-demo-crontab -o jsonpath='{.status}'
@@ -102,28 +96,26 @@ No resources found in default namespace.
 
 ### Schema validation: mandatory at definition, enforced on every instance
 
-**Why**: `apiextensions.k8s.io/v1` requires every version listed in a
-CRD to carry an `openAPIV3Schema` - unlike the removed `v1beta1`, where
-it was optional. This isn't just a definition-time formality: once a
-schema is in place, the apiserver validates every instance against it
-the same way it validates a Pod's `spec.containers[].image` is a
-string, rejecting anything that doesn't match before it's ever stored.
+**Why**: in `apiextensions.k8s.io/v1`, every version in a CRD must have
+an `openAPIV3Schema` describing its fields. (In the old `v1beta1`,
+since removed, it was optional.) The apiserver then checks every new or
+changed object against that schema and rejects anything that doesn't
+match, just as it rejects a Pod whose `image` isn't a string.
 
-**Example**: a CRD missing `schema` entirely
-(`tutorial/examples/crds/crontab-crd-no-schema.yaml`), and a `CronTab`
-instance with `replicas` as a string instead of an integer
-(`tutorial/examples/crds/crontab-instance-invalid.yaml`), which
-violates `crontab-crd.yaml`'s schema:
+**Example**: [`crontab-crd-no-schema.yaml`](examples/crds/crontab-crd-no-schema.yaml)
+is a CRD without a schema.
+[`crontab-instance-invalid.yaml`](examples/crds/crontab-instance-invalid.yaml)
+is a `CronTab` whose `replicas` is a string, although
+`crontab-crd.yaml`'s schema says it must be an integer:
 
 ```
 kubectl apply -f tutorial/examples/crds/crontab-crd-no-schema.yaml
 kubectl apply -f tutorial/examples/crds/crontab-instance-invalid.yaml
 ```
 
-**Expected output**: both rejected outright by the apiserver, before
-either object is ever stored - the missing-schema CRD fails at
-definition time, the bad-type instance fails at instance-creation time
-against the schema `crontab-crd.yaml` already registered:
+**Expected output**: the apiserver rejects both. The CRD fails because
+it has no schema; the `CronTab` fails because it doesn't match the
+schema that's already registered:
 
 ```
 $ kubectl apply -f tutorial/examples/crds/crontab-crd-no-schema.yaml
@@ -133,30 +125,25 @@ $ kubectl apply -f tutorial/examples/crds/crontab-instance-invalid.yaml
 The CronTab "tutorial-demo-crontab-invalid" is invalid: spec.replicas: Invalid value: "string": spec.replicas in body must be of type integer: "string"
 ```
 
-Neither the malformed CRD nor the invalid instance is created - the
-schema does real validation work at both layers, not just at the
-apiserver's own bookkeeping level.
+Neither object was stored.
 
 ### Deleting a CRD cascades to every instance - and the type itself
 
-**Why**: a CRD isn't just a template for validating instances - it's
-the API type registration itself. Deleting it removes both: every
-existing instance of that type is deleted along with it, and the type
-stops existing at the API level entirely. `kubectl get` against it
-afterward isn't an empty list (as it would be for, say, a Deployment
-after the last one is deleted) - it's a genuine "the server doesn't
-have a resource type" error, because the type itself is gone.
+**Why**: the CRD *is* the type. Deleting it deletes every object of
+that type too, and the type itself disappears from the API. So a
+`kubectl get` afterwards doesn't return an empty list, as it would after
+you delete the last Deployment. It returns an error saying the server
+doesn't know the resource type.
 
-**Example**: delete the CRD registered earlier and check what's left:
+**Example**: delete the CRD and look for `CronTab` objects:
 
 ```
 kubectl delete crd crontabs.example.com
 kubectl get crontabs
 ```
 
-**Expected output**: the delete cascades away `tutorial-demo-crontab`
-along with the CRD itself, and the follow-up `get` fails with a
-type-level error, not an empty list:
+**Expected output**: `tutorial-demo-crontab` is deleted along with the
+CRD, and `get` fails:
 
 ```
 $ kubectl delete crd crontabs.example.com
@@ -166,61 +153,52 @@ $ kubectl get crontabs
 Error from server (NotFound): Unable to list "example.com/v1, Resource=crontabs": the server could not find the requested resource (get crontabs.example.com)
 ```
 
-That's a `NotFound` on the resource type itself (`get crontabs.example.com`
-in the error), not on any particular object - the apiserver no longer
-knows what a `CronTab` is at all.
+The `NotFound` is about the resource type (`get crontabs.example.com`),
+not about one object: the apiserver no longer knows what a `CronTab`
+is.
 
 ### When a CRD isn't enough: the aggregated-API-server alternative
 
-**Why**: every mechanism this chapter covered assumes a CRD is the
-right tool - it's worth naming the point where that assumption breaks
-down, even without standing anything up to prove it. A CRD gets a lot
-of mileage for free - the apiserver stores instances in
-etcd, validates them against `openAPIV3Schema`, and gives them
-`kubectl get`/`apply`/`describe`/`watch` for nothing beyond the
-manifest above. That storage model is also its ceiling: every
-instance is a plain Kubernetes object in etcd, so a CRD can't back
-itself with a different datastore, implement custom logic in the read
-path (computed fields, joins against something else, request-time
-authorization beyond RBAC), or expose semantics etcd's object model
-doesn't fit - none of which a schema, however elaborate, can add.
+**Why**: a CRD gives you a lot for free. The apiserver stores the
+objects in etcd, validates them against the schema, and supports
+`kubectl get`, `apply`, `describe` and `watch` on them, all from one
+manifest. But that's also its limit: every object is stored in etcd and
+returned as stored. A CRD can't keep its data somewhere else, can't
+compute an answer when someone reads it, and can't add authorization
+checks beyond RBAC. No schema can change that.
 
-The alternative is registering a real, separate API server as an
-**aggregated API** rather than a new type inside the existing one - the
-apiserver's aggregation layer (always present, not something a CRD opts
-into or out of) proxies requests for a given API group to whatever
-backend `Service` an `APIService` object points at, and that backend
-can be anything that speaks the Kubernetes API conventions, backed by
-whatever storage or logic it wants. One related flag worth knowing by
-name: `--enable-aggregator-routing` (confirmed live via `kubectl exec
--n kube-system kube-apiserver-<node> -- kube-apiserver --help`) doesn't
-turn the aggregation layer on or off - it only changes how the
-apiserver reaches a registered backend, routing directly to its Pod
-endpoint IPs instead of through the backend Service's cluster IP.
-This isn't a hypothetical: `kubectl top`
-(chapter 10) already depends on exactly this mechanism - metrics-server
-isn't a CRD or a built-in type, it's a separate binary registered via an
-`APIService`, and `kubectl get apiservice v1beta1.metrics.k8s.io` on
-this very cluster shows it live, `service.name: metrics-server` proxying
-the whole `metrics.k8s.io` group to a Deployment that computes its
-answers on the fly from kubelet `/stats` scrapes rather than reading
-anything back out of etcd.
+When you need any of those, the alternative is an **aggregated API**:
+a separate API server of your own, which the main apiserver forwards
+requests to. The forwarding is done by the apiserver's *aggregation
+layer*, which is always on. You register your server with an
+`APIService` object, which names an API group and the `Service` in
+front of your server. From then on, requests for that group go to your
+server, which can store and compute its answers however it likes.
 
-This is a real, higher-cost decision, not a strictly-better upgrade path
-from CRDs: an aggregated API server is another process to build, ship,
-version, and keep available - if it's down, that entire API group is
-unreachable, unlike a CRD's instances, which stay readable straight out
-of etcd regardless of whether any controller watching them is healthy.
-The rule of thumb: reach for a CRD (with a controller, if anything
-should act on it) by default, and only reach for the aggregation layer
-when the requirement genuinely can't be expressed as "structured data in
-etcd plus a controller watching it" - custom storage, computed/virtual
-responses, or semantics the object model itself can't represent.
+You've already used one. `kubectl top` (chapter 10) reads the
+`metrics.k8s.io` group, and that group is served by metrics-server, a
+separate Deployment registered with an `APIService`. On this cluster,
+`kubectl get apiservice v1beta1.metrics.k8s.io` shows it, with
+`service.name: metrics-server`. metrics-server doesn't read anything
+from etcd: it works out its answers from the metrics it collects from
+each node's kubelet.
 
-There's a third way a new API group can show up, distinct from both of
-the above: compiled directly into `kube-apiserver` itself, neither a CRD
-nor a separate aggregated process. `resource.k8s.io` (Dynamic Resource
-Allocation, chapter 14) is exactly that - present unconditionally on any
-Kubernetes 1.34+ cluster, nothing to register or apply, and inert
-without a driver actually using it. Worth keeping distinct from both
-mechanisms this chapter covers.
+One related apiserver flag: `--enable-aggregator-routing` (listed in
+`kube-apiserver --help` on this cluster) doesn't turn aggregation on or
+off. It only changes how the apiserver reaches a registered server:
+directly at its Pods' IPs instead of through its Service's cluster IP.
+
+An aggregated API costs more than a CRD. It's another program to build,
+release and keep running, and if it's down, its whole API group is
+unavailable. A CRD's objects, by contrast, can still be read from etcd
+even when the controller that acts on them is broken. So use a CRD (plus
+a controller, if something should happen) by default. Use an aggregated
+API only when "data in etcd plus a controller" can't do the job: your
+own storage, answers computed on request, or behavior the object model
+can't express.
+
+A new API group can also arrive a third way: built into
+`kube-apiserver` itself, neither a CRD nor a separate server.
+`resource.k8s.io` (Dynamic Resource Allocation, chapter 14) is an
+example. It's present on every Kubernetes 1.34+ cluster with nothing to
+apply, and it does nothing until a device driver uses it.
