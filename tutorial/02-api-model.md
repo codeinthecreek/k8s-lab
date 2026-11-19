@@ -24,31 +24,35 @@ happens:
 
 ```
 kubectl get pods -n kube-system -l k8s-app=kube-proxy
-kubectl delete pod -n kube-system <one-pod-name-from-above>
+```
+
+```
+NAME               READY   STATUS    RESTARTS   AGE
+kube-proxy-6bz4p   1/1     Running   0          37m
+kube-proxy-7nxhc   1/1     Running   0          37m
+kube-proxy-8hdgr   1/1     Running   0          37m
+```
+
+```
+kubectl delete pod -n kube-system kube-proxy-6bz4p
 kubectl get pods -n kube-system -l k8s-app=kube-proxy
 ```
 
-**Expected output**: the deleted Pod is gone, and within seconds a
-replacement with a new name appears. Nobody said again "there should
-be a kube-proxy Pod on every node"; that desired state never
-changed:
+**Expected output**: the deleted Pod is gone, and a replacement with a
+new name is already being created. Nobody said again "there should be
+a kube-proxy Pod on every node"; that desired state never changed:
 
 ```
-NAME               READY   STATUS    RESTARTS   AGE
-kube-proxy-6fmjz   1/1     Running   0          16h
-kube-proxy-lcn5k   1/1     Running   0          16h
-kube-proxy-xx42q   1/1     Running   0          16h
-
-$ kubectl delete pod -n kube-system kube-proxy-6fmjz
-pod "kube-proxy-6fmjz" deleted from kube-system namespace
-
-NAME               READY   STATUS    RESTARTS   AGE
-kube-proxy-9vnfm   1/1     Running   0          8s
-kube-proxy-lcn5k   1/1     Running   0          16h
-kube-proxy-xx42q   1/1     Running   0          16h
+pod "kube-proxy-6bz4p" deleted from kube-system namespace
+NAME               READY   STATUS              RESTARTS   AGE
+kube-proxy-7nxhc   1/1     Running             0          37m
+kube-proxy-859c2   0/1     ContainerCreating   0          1s
+kube-proxy-8hdgr   1/1     Running             0          37m
 ```
 
-`kube-proxy-9vnfm` is a new Pod, not the old one restarted. The
+A few seconds later, `kube-proxy-859c2` is `Running` too.
+
+`kube-proxy-859c2` is a new Pod, not the old one restarted. The
 DaemonSet controller saw a node without a kube-proxy Pod and created
 one.
 
@@ -82,22 +86,23 @@ kubectl apply -f tutorial/examples/api-model/namespace.yaml
 kubectl get namespace tutorial-api-model -o yaml
 ```
 
-**Expected output**: `namespace/tutorial-api-model created`, and the
-object you get back has much more in it than you sent:
+**Expected output**: the object you get back has much more in it than
+you sent:
 
 ```yaml
+namespace/tutorial-api-model created
 apiVersion: v1
 kind: Namespace
 metadata:
   annotations:
     kubectl.kubernetes.io/last-applied-configuration: |
       {"apiVersion":"v1","kind":"Namespace","metadata":{"annotations":{},"name":"tutorial-api-model"}}
-  creationTimestamp: "2026-08-28T03:34:24Z"
+  creationTimestamp: "2026-11-19T11:59:48Z"
   labels:
     kubernetes.io/metadata.name: tutorial-api-model
   name: tutorial-api-model
-  resourceVersion: "99893"
-  uid: 7ce8ace6-fb9f-46c3-a194-b990ca2cd702
+  resourceVersion: "6783"
+  uid: 1193fa2f-5f1d-4b0a-b943-38a310fb626a
 spec:
   finalizers:
   - kubernetes
@@ -146,12 +151,10 @@ kubectl get pods -n tutorial-api-model-team-b
 namespace/tutorial-api-model-team-b created
 pod/namespace-demo created
 pod/namespace-demo created
-
 NAME             READY   STATUS    RESTARTS   AGE
-namespace-demo   1/1     Running   0          4s
-
+namespace-demo   1/1     Running   0          5s
 NAME             READY   STATUS    RESTARTS   AGE
-namespace-demo   1/1     Running   0          3s
+namespace-demo   1/1     Running   0          5s
 ```
 
 It's also why the cluster's own components live in `kube-system`, not
@@ -170,26 +173,31 @@ response, so you can see this for yourself.
 **Example**: a read and a write on the same object, with tracing:
 
 ```
-kubectl get namespace tutorial-api-model -v=8 2>&1
-kubectl label namespace tutorial-api-model tutorial.example/stage=relabeled -v=8 2>&1
+kubectl get namespace tutorial-api-model -v=8 2>&1 | grep -E '"Request"|"Response"|Request Body'
+kubectl label namespace tutorial-api-model tutorial.example/stage=relabeled -v=8 2>&1 | grep -E '"Request"|"Response"|Request Body'
 ```
 
-**Expected output**: a `GET` for the read, and a `PATCH` with a JSON
-body for the label change, both plain HTTP requests to the same
-URL:
+`-v=8` prints a lot (every header, the full response body), so `grep`
+keeps only the request and response lines.
+
+**Expected output**: a `GET` for the read. For the label change,
+`kubectl` first reads the object with a `GET`, then sends a `PATCH`
+with a JSON body containing just the new label. All are plain HTTP
+requests to the same URL:
 
 ```
-"Request" verb="GET" url="https://127.0.0.1:34415/api/v1/namespaces/tutorial-api-model"
-"Response" status="200 OK"
+I1119 11:59:59.614249 1515675 helper.go:105] "Request Body" body=""
+I1119 11:59:59.614292 1515675 round_trippers.go:527] "Request" verb="GET" url="https://127.0.0.1:41419/api/v1/namespaces/tutorial-api-model" headers=<
+I1119 11:59:59.621013 1515675 round_trippers.go:632] "Response" status="200 OK" headers=<
+I1119 11:59:59.682272 1515688 helper.go:105] "Request Body" body=""
+I1119 11:59:59.682311 1515688 round_trippers.go:527] "Request" verb="GET" url="https://127.0.0.1:41419/api/v1/namespaces/tutorial-api-model" headers=<
+I1119 11:59:59.689538 1515688 round_trippers.go:632] "Response" status="200 OK" headers=<
+I1119 11:59:59.690209 1515688 helper.go:269] "Request Body" body="{\"metadata\":{\"labels\":{\"tutorial.example/stage\":\"relabeled\"}}}"
+I1119 11:59:59.690249 1515688 round_trippers.go:527] "Request" verb="PATCH" url="https://127.0.0.1:41419/api/v1/namespaces/tutorial-api-model?fieldManager=kubectl-label" headers=<
+I1119 11:59:59.747111 1515688 round_trippers.go:632] "Response" status="200 OK" headers=<
 ```
 
-```
-"Request Body" body="{\"metadata\":{\"labels\":{\"tutorial.example/stage\":\"relabeled\"}}}"
-"Request" verb="PATCH" url="https://127.0.0.1:34415/api/v1/namespaces/tutorial-api-model?fieldManager=kubectl-label"
-"Response" status="200 OK"
-```
-
-The port in the URL (`34415` here) is the port kind chose for this
+The port in the URL (`41419` here) is the port kind chose for this
 cluster's API server on your host (chapter 1). It's different for
 every cluster; the requests look the same.
 
@@ -223,43 +231,36 @@ object wasn't recreated, then apply the original file again and see
 whether the label survives:
 
 ```
-kubectl get namespace tutorial-api-model -o jsonpath='{.metadata.uid}{"\n"}{.metadata.creationTimestamp}'
+kubectl get namespace tutorial-api-model -o jsonpath='{.metadata.uid}{"\n"}{.metadata.creationTimestamp}{"\n"}'
 kubectl apply -f tutorial/examples/api-model/namespace-relabeled.yaml
-kubectl get namespace tutorial-api-model -o jsonpath='{.metadata.uid}{"\n"}{.metadata.creationTimestamp}'
-kubectl get namespace tutorial-api-model -o jsonpath='{.metadata.labels}'
-kubectl apply -f tutorial/examples/api-model/namespace.yaml
-kubectl get namespace tutorial-api-model -o jsonpath='{.metadata.labels}'
+kubectl get namespace tutorial-api-model -o jsonpath='{.metadata.uid}{"\n"}{.metadata.creationTimestamp}{"\n"}'
+kubectl get namespace tutorial-api-model -o jsonpath='{.metadata.labels}{"\n"}'
 ```
 
 **Expected output**: `uid` and `creationTimestamp` are the same before
-and after: the object was changed in place, not deleted and
-recreated:
+and after: the object was changed in place, not deleted and recreated.
+The label is there:
 
 ```
-7ce8ace6-fb9f-46c3-a194-b990ca2cd702
-2026-08-28T03:34:24Z
-```
-```
+1193fa2f-5f1d-4b0a-b943-38a310fb626a
+2026-11-19T11:59:48Z
 namespace/tutorial-api-model configured
-```
-```
-7ce8ace6-fb9f-46c3-a194-b990ca2cd702
-2026-08-28T03:34:24Z
-```
-
-The label is there after the apply:
-
-```
+1193fa2f-5f1d-4b0a-b943-38a310fb626a
+2026-11-19T11:59:48Z
 {"kubernetes.io/metadata.name":"tutorial-api-model","tutorial.example/stage":"relabeled"}
 ```
 
-After applying the original file again, which doesn't have that label,
-it's gone from the object:
+Now apply the original file again, which doesn't have that label:
+
+```
+kubectl apply -f tutorial/examples/api-model/namespace.yaml
+kubectl get namespace tutorial-api-model -o jsonpath='{.metadata.labels}{"\n"}'
+```
+
+**Expected output**: the label is gone from the object:
 
 ```
 namespace/tutorial-api-model configured
-```
-```
 {"kubernetes.io/metadata.name":"tutorial-api-model"}
 ```
 
@@ -280,4 +281,9 @@ it all:
 kubectl delete namespace tutorial-api-model tutorial-api-model-team-b
 ```
 
-It waits for the Pods to stop, so it can take a few seconds.
+```
+namespace "tutorial-api-model" deleted
+namespace "tutorial-api-model-team-b" deleted
+```
+
+It waits for the Pods to stop, so it can take several seconds.
