@@ -1,8 +1,7 @@
 import http.server
 import os
-import socket
 
-CODE_VERSION = "v2"
+CODE_VERSION = "v1"
 GREETING = os.environ.get("GREETING", "hello")
 
 
@@ -11,7 +10,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/plain")
         self.end_headers()
-        body = f"{GREETING} from app-deployment-demo {CODE_VERSION}, served by {socket.gethostname()}\n"
+        body = f"{GREETING} from app-deployment-demo {CODE_VERSION}\n"
         self.wfile.write(body.encode())
 
 

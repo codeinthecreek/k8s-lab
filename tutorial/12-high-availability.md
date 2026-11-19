@@ -1,30 +1,29 @@
 # 12. High availability and cluster operations
 
-Every chapter so far ran against a single-control-plane cluster, where
-"the control plane" and "one node" were interchangeable. This capstone
-chapter breaks that assumption: `ha-control-plane` runs 3 control-plane
-nodes and asks what changes when there are three of everything -
-apiserver, scheduler, controller-manager, and a member of etcd. The
-short answer is: less than it looks like, because a load balancer and
-etcd's own consensus protocol absorb almost all of the difference, and
-almost everything from chapters 1-11 still applies unchanged
-underneath. It closes with three operational skills this topology
-exists to support: bounding *voluntary* disruption with
-PodDisruptionBudgets (as opposed to the involuntary node failure
-covered earlier), backing up and restoring etcd itself, and the real
-`kubeadm upgrade` mechanism.
+Every chapter so far used a cluster with one control-plane node. This
+chapter uses the `ha-control-plane` profile, which has three. That means
+three of everything: three apiservers, three schedulers, three
+controller-managers and three etcd members.
+
+Less changes than you might expect. A load balancer in front of the
+apiservers, and etcd's own way of reaching agreement, hide most of the
+difference, and everything from chapters 1-11 works the same way
+underneath.
+
+The chapter first looks at how this cluster is built, then at what
+happens when a control-plane node fails. It ends with three operational
+tasks: limiting planned disruption with PodDisruptionBudgets, backing up
+and restoring etcd, and planning a cluster upgrade with `kubeadm`.
 
 ### Multi-control-plane topology: stacked etcd, one apiserver each
 
-**Why**: `kind/profiles/ha-control-plane/cluster.yaml` runs 3
-control-plane nodes and 2 workers, same pinned node image as `default`
-(chapter 1). Each control-plane node runs its own etcd member alongside
-its own apiserver/controller-manager/scheduler as static pods - this is
-**stacked etcd**, etcd colocated on the same nodes as the control-plane
-processes that use it, as opposed to etcd running on separate dedicated
-nodes. Nothing about a static pod (chapter 1) changes with 3
-control-plane nodes instead of 1 - there are just 3 independent copies
-of the same static-pod manifest set, one per node.
+**Why**: the `ha-control-plane` profile has 3 control-plane nodes and 2
+workers, on the same pinned node image as `default` (chapter 1). Each
+control-plane node runs its own apiserver, controller-manager, scheduler
+and etcd member, all as static Pods. Running etcd on the control-plane
+nodes like this is called **stacked etcd**; the alternative is etcd on
+separate, dedicated nodes. Static Pods work exactly as in chapter 1;
+there are simply three copies of the same set, one per node.
 
 **Example**: list the nodes and the Docker containers backing them:
 
@@ -39,11 +38,11 @@ plus a 6th container - the LB - that isn't a Kubernetes node at all:
 ```
 $ kubectl get nodes -o wide
 NAME                                      STATUS   ROLES           AGE     VERSION   INTERNAL-IP   EXTERNAL-IP   OS-IMAGE                       KERNEL-VERSION           CONTAINER-RUNTIME
-k8s-lab-ha-control-plane-control-plane    Ready    control-plane   8m16s   v1.36.1   172.19.0.6    <none>        Debian GNU/Linux 13 (trixie)   7.1.11-arch1-1 (amd64)   containerd://2.3.1
-k8s-lab-ha-control-plane-control-plane2   Ready    control-plane   6m30s   v1.36.1   172.19.0.5    <none>        Debian GNU/Linux 13 (trixie)   7.1.11-arch1-1 (amd64)   containerd://2.3.1
-k8s-lab-ha-control-plane-control-plane3   Ready    control-plane   5m17s   v1.36.1   172.19.0.7    <none>        Debian GNU/Linux 13 (trixie)   7.1.11-arch1-1 (amd64)   containerd://2.3.1
-k8s-lab-ha-control-plane-worker           Ready    <none>          5m13s   v1.36.1   172.19.0.4    <none>        Debian GNU/Linux 13 (trixie)   7.1.11-arch1-1 (amd64)   containerd://2.3.1
-k8s-lab-ha-control-plane-worker2          Ready    <none>          5m13s   v1.36.1   172.19.0.3    <none>        Debian GNU/Linux 13 (trixie)   7.1.11-arch1-1 (amd64)   containerd://2.3.1
+k8s-lab-ha-control-plane-control-plane    Ready    control-plane   8m16s   v1.36.1   172.19.0.6    <none>        Debian GNU/Linux 13 (trixie)   <host kernel> (amd64)    containerd://2.3.1
+k8s-lab-ha-control-plane-control-plane2   Ready    control-plane   6m30s   v1.36.1   172.19.0.5    <none>        Debian GNU/Linux 13 (trixie)   <host kernel> (amd64)    containerd://2.3.1
+k8s-lab-ha-control-plane-control-plane3   Ready    control-plane   5m17s   v1.36.1   172.19.0.7    <none>        Debian GNU/Linux 13 (trixie)   <host kernel> (amd64)    containerd://2.3.1
+k8s-lab-ha-control-plane-worker           Ready    <none>          5m13s   v1.36.1   172.19.0.4    <none>        Debian GNU/Linux 13 (trixie)   <host kernel> (amd64)    containerd://2.3.1
+k8s-lab-ha-control-plane-worker2          Ready    <none>          5m13s   v1.36.1   172.19.0.3    <none>        Debian GNU/Linux 13 (trixie)   <host kernel> (amd64)    containerd://2.3.1
 
 $ docker ps --filter "name=k8s-lab-ha-control-plane" --format "table {{.Names}}\t{{.Status}}"
 NAMES                                             STATUS
@@ -55,26 +54,24 @@ k8s-lab-ha-control-plane-control-plane3           Up 8 minutes
 k8s-lab-ha-control-plane-worker2                  Up 8 minutes
 ```
 
-(`control-plane2`'s short uptime above is real - it's the node this
-chapter's own failure-simulation section stops and restarts further
-down, captured after that exercise ran.) 6 containers total for 5
-Kubernetes nodes - the load balancer is Docker infrastructure kind
-manages, not a node `kubectl get nodes` will ever list.
+That's 6 containers for 5 nodes. The extra one is the load balancer:
+kind runs it as a Docker container, and it is not a Kubernetes node, so
+`kubectl get nodes` never lists it. (`control-plane2` shows a short
+uptime because this output was captured after the failure exercise later
+in the chapter, which stops and restarts it.)
 
 ### Why 3, not 4: etcd quorum
 
-**Why**: etcd tolerates the loss of up to `floor(n/2)` members while
-still serving writes - a 3-member cluster tolerates 1 failure (needs 2
-of 3 to agree), and so does a 4-member cluster (needs 3 of 4), for the
-cost of one extra node and strictly *worse* quorum math than 3. This is
-why odd numbers of 3 or more are the practical convention for etcd
-sizing - an even member count never buys additional fault tolerance
-over the odd number just below it.
+**Why**: etcd only accepts a write when a majority of its members agree
+(a *quorum*). With 3 members, a majority is 2, so the cluster survives
+losing 1. With 4 members, a majority is 3, so it *still* survives losing
+only 1, and you pay for an extra node. In general, adding a member to an
+odd-sized cluster buys no extra fault tolerance, which is why etcd
+clusters are sized 3, 5 or 7.
 
-**Example**: check etcd's own view of its cluster membership and
-health by running `etcdctl` inside the etcd static pod itself - it
-ships `etcdctl` in-image, and its client requires the TLS certs
-kubeadm already placed on disk:
+**Example**: ask etcd for its members and their health. The etcd image
+includes the `etcdctl` client, so run it inside an etcd static Pod. It
+needs the TLS certificates kubeadm put on the node, passed as flags:
 
 ```
 kubectl exec -n kube-system etcd-<a-control-plane-node-name> -- etcdctl \
@@ -92,10 +89,7 @@ kubectl exec -n kube-system etcd-<a-control-plane-node-name> -- etcdctl \
   endpoint health --cluster
 ```
 
-**Expected output**: 3 members, all healthy, and no `docker exec`
-fallback needed - `kubectl exec` into the etcd static pod works
-directly, `etcdctl` is on its `PATH`, and the certs kubeadm placed are
-exactly where the flags above expect:
+**Expected output**: 3 members, all healthy:
 
 ```
 $ kubectl exec -n kube-system etcd-k8s-lab-ha-control-plane-control-plane -- etcdctl \
@@ -123,30 +117,28 @@ https://172.19.0.5:2379 is healthy: successfully committed proposal: took = 4.93
 https://172.19.0.7:2379 is healthy: successfully committed proposal: took = 4.869108ms
 ```
 
-etcd's own membership is covered - the next question is how anything
-outside etcd, like `kubectl` itself, actually reaches one of these three
-apiservers in the first place.
+That's etcd. Next: how does a client such as `kubectl` reach one of
+the three apiservers?
 
 ### Envoy fronts the apiservers - the kubeconfig points at the LB, not a node
 
-**Why**: with more than one control-plane node, kind stands up an
-additional Docker container running Envoy
-(`<cluster-name>-external-load-balancer`) in front of all 3
-apiservers. The kubeconfig's `server:` field, and every control-plane
-node's own `kubeadm join --control-plane` process, point at that Envoy
-container - never at any individual apiserver directly. Envoy's actual
-routing isn't its image's static `/etc/envoy/envoy.yaml` (that's
-unused stock demo config) - it's dynamic xDS resources the container's
-entrypoint generates at start: `/home/envoy/cds.yaml` (a cluster
-listing all 3 control-plane nodes by container hostname on port 6443,
-with active health checks) and `/home/envoy/lds.yaml` (a TCP listener
-on 6443 forwarding into that cluster).
+**Why**: when a cluster has more than one control-plane node, kind adds
+a Docker container running Envoy, a load balancer, named
+`<cluster-name>-external-load-balancer`. Your kubeconfig points at this
+container, not at any one apiserver, and so does each control-plane
+node when it joins the cluster. Envoy forwards each connection to one of
+the three apiservers.
 
-**Example**: confirm what the kubeconfig actually points at, and read
-Envoy's real generated config directly (the Envoy image has no shell
-utilities - no `curl`/`wget` - so reading the files it already wrote is
-the practical approach, not hitting its admin API from inside the
-container):
+Envoy's routing is set up when the container starts, in two files it
+generates: `/home/envoy/cds.yaml` lists the three control-plane nodes on
+port 6443, with health checks, and `/home/envoy/lds.yaml` sets up a
+listener on 6443 that forwards to them. (The image also contains
+`/etc/envoy/envoy.yaml`, but that's an unused example config.)
+
+**Example**: check where the kubeconfig points, and read Envoy's
+generated config. The Envoy image has no shell tools such as `curl`, so
+reading the files is easier than querying Envoy from inside the
+container:
 
 ```
 kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}'
@@ -155,9 +147,9 @@ docker exec <lb-container> cat /home/envoy/cds.yaml
 docker port <lb-container>
 ```
 
-**Expected output**: the kubeconfig points at a `127.0.0.1` port that
-maps straight to the LB container, not to any control-plane node, and
-`cds.yaml` lists all 3 by container hostname:
+**Expected output**: the kubeconfig points at a port on `127.0.0.1`,
+and that port belongs to the load balancer container, not to any
+control-plane node:
 
 ```
 $ kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}'
@@ -167,49 +159,43 @@ $ docker port k8s-lab-ha-control-plane-external-load-balancer
 6443/tcp -> 127.0.0.1:40475
 ```
 
-`cat /home/envoy/cds.yaml` shows a `kube_apiservers` `STRICT_DNS`
-cluster with all 3 control-plane nodes
-(`k8s-lab-ha-control-plane-control-plane`, `-control-plane2`,
-`-control-plane3`) as `lb_endpoints` on port 6443, plus active health
-checks (`GET /healthz` every 2s) - this is what lets Envoy notice a
-dead backend and stop routing to it, demonstrated in the next section.
+`cds.yaml` (not shown in full) lists all 3 control-plane nodes on port
+6443, and health-checks each one with `GET /healthz` every 2 seconds.
+Those checks are how Envoy notices a dead apiserver and stops sending
+traffic to it, as the next section shows.
 
-Envoy's admin interface (port 10000) turns out **not** to be published
-to the host at all - `docker port <lb-container>` only shows `6443`,
-confirmed with `docker inspect <lb-container>` showing `"10000/tcp":
-null`. It's still reachable, just not via `localhost`: from the
-container's address on the `kind` Docker network directly:
+Envoy also has an admin interface on port 10000. kind doesn't publish
+it to the host (`docker port` only lists 6443), but you can reach it on
+the container's own address on the `kind` Docker network:
 
 ```
 $ LB_IP=$(docker inspect k8s-lab-ha-control-plane-external-load-balancer --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
 $ curl -s http://${LB_IP}:10000/clusters | head
 ```
 
-returns real per-backend stats for all 3 apiservers - used again in the
-next section to watch a backend go unhealthy in real time.
+This prints statistics for each of the 3 apiservers. The next section
+uses it to watch one of them fail.
 
-That covers how this topology is structurally built - etcd membership,
-quorum, and the load balancer in front of it. The rest of the chapter
-turns to what actually happens when a piece of it breaks or is
-operated on.
+That's how the cluster is built. The rest of the chapter is about what
+happens when part of it fails or needs maintenance.
 
 ### Node-failure semantics: `docker stop` is the honest simulation
 
-**Why**: not every way of breaking a control-plane node actually
-simulates node failure. `docker stop <container>` removes the
-container entirely - Envoy's health check fails, DNS can't resolve the
-hostname, and the node is genuinely gone from the LB's perspective,
-which is what real hardware failure looks like. `docker exec
-<container> systemctl stop containerd`, by contrast, does **not**
-reproduce failure - `containerd-shim` processes keep every
-already-running container (apiserver included) alive independent of
-the daemon that started them, so `kube-apiserver` keeps answering
-health checks throughout. Only *new* CRI operations (starting or
-pulling a container) are affected - an easy trap if you're trying to
-demonstrate quorum loss and see nothing happen.
+**Why**: to see what happens when a control-plane node fails, you have
+to break it the right way.
 
-**Example**: try both, and compare what each actually does to cluster
-availability and to Envoy's view of that backend:
+- `docker stop <container>` stops the whole node container. Envoy's
+  health checks fail, its hostname stops resolving, and as far as the
+  rest of the cluster can tell the node is gone. That's what a real
+  hardware failure looks like.
+- `docker exec <container> systemctl stop containerd` looks similar but
+  isn't. Containers that are already running, including the apiserver,
+  keep running without the containerd daemon, so the apiserver keeps
+  answering health checks. Only *new* container operations fail. If you
+  use this to try to break quorum, nothing seems to happen.
+
+**Example**: try both, and compare what each does to the cluster and to
+Envoy's view of that node:
 
 ```
 # The one that does NOT reproduce node failure:
@@ -225,10 +211,8 @@ curl -s http://${LB_IP}:10000/clusters | grep -A2 <stopped-node-ip>
 docker start <a-control-plane-container>   # restore
 ```
 
-**Expected output**: stopping `containerd` changes nothing observable
-- every node, including the one whose `containerd` is down, still
-shows `Ready`, because the already-running `kube-apiserver` container
-keeps answering independent of the daemon that started it:
+**Expected output**: stopping containerd changes nothing you can see.
+Every node, including the one without containerd, stays `Ready`:
 
 ```
 $ docker exec k8s-lab-ha-control-plane-control-plane2 systemctl stop containerd
@@ -241,11 +225,11 @@ k8s-lab-ha-control-plane-worker           Ready    <none>          ...   v1.36.1
 k8s-lab-ha-control-plane-worker2          Ready    <none>          ...   v1.36.1
 ```
 
-`docker stop`, by contrast, actually removes the container - and the
-cluster stays available throughout (etcd quorum and 2/3 control-plane
-capacity both hold), but the stopped node's own `Ready` status does
-eventually flip, once its kubelet stops posting heartbeats for longer
-than the node-monitor grace period - not instantly:
+`docker stop` really takes the node away. The cluster keeps working,
+because etcd still has a quorum and two apiservers are left. The stopped
+node's status doesn't change at once, though: it turns `NotReady` only
+after its kubelet has missed status updates for longer than the node
+monitor's grace period:
 
 ```
 $ docker stop k8s-lab-ha-control-plane-control-plane2
@@ -261,12 +245,10 @@ $ kubectl get node k8s-lab-ha-control-plane-control-plane2 -o jsonpath='{.status
 {"lastHeartbeatTime":"2026-08-30T08:05:59Z","lastTransitionTime":"2026-08-30T08:06:51Z","message":"Kubelet stopped posting node status.","reason":"NodeStatusUnknown","status":"Unknown","type":"Ready"}
 ```
 
-The other 4 nodes stay `Ready` throughout, and `kubectl get nodes`
-itself never stops working - this is the whole point of 3
-control-plane nodes plus etcd quorum plus a load balancer in front:
-losing 1 of 3 degrades nothing observable to a client. Envoy's own view
-confirms it noticed independently, faster than the node-status
-timeout:
+The other 4 nodes stay `Ready`, and `kubectl get nodes` keeps working
+the whole time. That's the point of 3 control-plane nodes, etcd quorum
+and a load balancer: a client doesn't notice when 1 of the 3 is lost.
+Envoy noticed even sooner than Kubernetes did:
 
 ```
 $ curl -s http://${LB_IP}:10000/clusters | grep -B1 health_flags
@@ -275,32 +257,28 @@ $ curl -s http://${LB_IP}:10000/clusters | grep -B1 health_flags
 172.19.0.7:6443::health_flags::healthy
 ```
 
-`172.19.0.5` is `control-plane2` - Envoy's 2-second active health
-check marked it unhealthy well before Kubernetes' own node-status
-mechanism did, and routes new apiserver requests to the other two
-without anything downstream noticing.
+`172.19.0.5` is `control-plane2`. Envoy's 2-second health check marked
+it as failed well before its node status changed, and Envoy now sends
+new requests only to the other two apiservers.
 
 ### PodDisruptionBudgets: bounding voluntary disruption
 
-**Why**: the previous section's `docker stop` was an *involuntary*
-disruption - nothing asked permission, the container just died, and
-the cluster's tolerance for it came entirely from etcd quorum and the
-LB. A *voluntary* disruption is different in kind, not just cause: a
-`kubectl drain` before maintenance, a node upgrade (next section), or
-an autoscaler removing a node all go through the **Eviction API**
-rather than a Pod just disappearing - and a PodDisruptionBudget (PDB)
-is what a workload uses to cap how much of that voluntary disruption
-it will tolerate at once, expressed as `minAvailable` or
-`maxUnavailable`. Critically, only the Eviction API respects a PDB - a
-plain `kubectl delete pod` bypasses it entirely, because deletion and
-eviction are different requests even though both end with the Pod
-gone.
+**Why**: the `docker stop` above was an *involuntary* disruption: the
+node just died, and nothing asked permission. A *voluntary* disruption is
+a planned one: draining a node before maintenance with `kubectl drain`,
+upgrading a node (next section), or an autoscaler removing one. These
+remove Pods through the **Eviction API**, and a workload can limit how
+many of its Pods are evicted at once with a **PodDisruptionBudget**
+(PDB), using `minAvailable` or `maxUnavailable`.
 
-**Example**: a 3-replica Deployment with a PDB requiring at least 2
-available at all times, then two evictions fired in immediate
-succession via the raw Eviction API (`kubectl drain`'s underlying
-mechanism) - the first should succeed, the second should be refused
-before it ever touches the second Pod:
+Only evictions respect a PDB. A plain `kubectl delete pod` ignores it:
+deleting and evicting both end with the Pod gone, but they're different
+requests.
+
+**Example**: create a Deployment with 3 replicas and a PDB that keeps
+at least 2 available. Then send two evictions straight after each other
+through the Eviction API, which is what `kubectl drain` uses. The first
+should succeed and the second should be refused:
 
 ```
 kubectl create deployment ha-demo-pdb --image=nginx:1.27 --replicas=3
@@ -319,11 +297,10 @@ curl -s -X POST localhost:8001/api/v1/namespaces/default/pods/$POD2/eviction \
   -d "{\"apiVersion\":\"policy/v1\",\"kind\":\"Eviction\",\"metadata\":{\"name\":\"$POD2\",\"namespace\":\"default\"}}"
 ```
 
-**Expected output**: the PDB starts with `ALLOWED DISRUPTIONS: 1` (3
-replicas, `minAvailable: 2`), the first eviction succeeds with a
-`201`/`Success`, and the second - fired immediately after, before any
-replacement Pod has had a chance to become `Ready` - is refused with a
-`429`/`TooManyRequests`, citing the exact disruption-budget math:
+**Expected output**: with 3 replicas and `minAvailable: 2`, the PDB
+allows 1 disruption. The first eviction succeeds (`201`). The second
+comes before a replacement Pod is ready, and is refused with `429
+TooManyRequests`:
 
 ```
 $ kubectl get pdb ha-demo-pdb
@@ -357,10 +334,8 @@ $ curl -s -X POST localhost:8001/api/v1/namespaces/default/pods/$POD2/eviction .
 }
 ```
 
-`kubectl get pdb ha-demo-pdb` right after confirms `ALLOWED
-DISRUPTIONS` dropped to `0` - the first eviction consumed the entire
-budget, which is exactly why the second was refused rather than
-merely delayed:
+Right afterwards, the PDB allows no more disruptions: the first eviction
+used up the budget.
 
 ```
 $ kubectl get pdb ha-demo-pdb
@@ -368,62 +343,51 @@ NAME          MIN AVAILABLE   MAX UNAVAILABLE   ALLOWED DISRUPTIONS   AGE
 ha-demo-pdb   2               N/A               0                    10s
 ```
 
-A `429` isn't a hard permanent failure the way the earlier `403`s in
-chapter 9 were - it's a signal to retry later, which is exactly what
-`kubectl drain` does internally: it keeps retrying an evict-refused Pod
-until the budget allows it (typically once the first eviction's
-replacement Pod becomes `Ready` again), rather than treating the
-refusal as the end of the operation.
+A `429` doesn't mean "never", unlike chapter 9's `403` errors. It means
+"try again later". `kubectl drain` does exactly that: it keeps retrying
+the refused eviction until the budget allows it, usually once the
+replacement Pod is `Ready`.
 
 ### etcd backup and restore
 
-**Why**: etcd holds the cluster's entire state - every object chapter
-2 onward has created lives there, not anywhere else. Losing it is a
-categorically different failure from losing a control-plane node
-(this chapter's earlier section, which quorum absorbs without any
-backup involved at all): a backup is what recovers from etcd itself
-being destroyed or corrupted, not from any single node dying.
-`snapshot save` takes a point-in-time snapshot of one member's data
-into a single file; `snapshot restore` rebuilds a fresh data directory
-from that file - but restore isn't "hot": it writes a brand new
-directory on disk and doesn't touch a running etcd process at all.
-Actually swapping a restored directory in for a live one needs etcd
-stopped first (moving its static pod manifest out of
-`/etc/kubernetes/manifests/`, so kubelet stops it), the data directory
-replaced, and the manifest moved back - real, but higher-risk to
-demonstrate against a running lab cluster than the snapshot/restore
-mechanism itself is, so this section verifies save-and-restore-to-a-
-new-directory live, and describes the live swap as the documented next
-step rather than performing it here. One version-specific wrinkle
-worth stating rather than assuming away: on this cluster's etcd,
-`snapshot status` and `snapshot restore` no longer live under
-`etcdctl` at all - that split happened at the 3.6 minor version, not
-tied to any one patch release - they moved to a separate offline tool,
-`etcdutl`, shipped in the same container. `etcdctl` still does
-`snapshot save` (it talks to a live etcd member over its client API);
-the other two operate on a file with etcd stopped, which is a
-fundamentally different (offline) operation - splitting them into a
-separate binary makes that distinction explicit rather than implicit.
+**Why**: etcd holds the cluster's entire state: every object you've
+created since chapter 2 is stored there and nowhere else. Losing a
+control-plane node is survivable, as the earlier section showed. Losing
+or corrupting etcd's data is not, and a backup is how you recover from
+that.
 
-A second wrinkle, worth resolving here before it looks like a
-contradiction later in this chapter: `etcdctl endpoint status` below
-reports two different-looking version numbers for the same running
-member - `VERSION` (the actual etcd binary release, `3.6.8` here) and
-`STORAGE VERSION` (a separately-tracked schema-compatibility marker
-etcd 3.6 introduced to gate safe downgrades, which stays pinned at its
-baseline, `3.6.0`, until something explicitly migrates it forward).
-`snapshot save` and `snapshot status` below report that same storage
-version under the label `VERSION`/`etcd-version`, not the binary
-version - so seeing `3.6.0` there and `3.6.8-0` out of `kubeadm upgrade
-plan` later in this chapter is two genuinely different, both-correct
-numbers for the identical running etcd member, not a discrepancy to
-resolve.
+A backup has two steps:
 
-**Example**: first, `etcdctl endpoint status` for a baseline - it's
-what the "two version numbers" wrinkle above is talking about - then a
-real snapshot from that same member with `etcdctl`, then use `etcdutl`
-- not `etcdctl` - for status and restore into a separate directory, to
-prove the file is genuinely valid and restorable:
+- `snapshot save` copies one etcd member's data into a single file,
+  while etcd is running.
+- `snapshot restore` builds a new etcd data directory from that file. It
+  doesn't touch the running etcd at all.
+
+To actually recover, you would stop etcd (by moving its static Pod
+manifest out of `/etc/kubernetes/manifests/`, so the kubelet stops it),
+replace its data directory with the restored one, and move the manifest
+back. That last part risks the lab cluster's data, so this section only
+describes it. It does run the save and the restore, into a separate
+directory.
+
+On this cluster's etcd (3.6), the commands are split between two tools,
+both in the etcd image. `etcdctl` talks to a running etcd and does
+`snapshot save`. `etcdutl` works on files, offline, and does `snapshot
+status` and `snapshot restore`. Older etcd versions had all three under
+`etcdctl`.
+
+One more thing before the commands: etcd reports two version numbers.
+`VERSION` is the etcd release that's running (`3.6.8` here). `STORAGE
+VERSION` is the format of its stored data (`3.6.0` here), which etcd
+tracks separately so that downgrades stay safe. The snapshot commands
+report the *storage* version, even though they call it `VERSION` or
+`etcd-version`. So you'll see `3.6.0` from the snapshot commands and
+`3.6.8` from `kubeadm` later in this chapter, for the same etcd member.
+Both are correct.
+
+**Example**: show the member's status, save a snapshot with `etcdctl`,
+then use `etcdutl` to check the file and restore it into a separate
+directory:
 
 ```
 kubectl exec -n kube-system etcd-<a-control-plane-node-name> -- etcdctl \
@@ -446,9 +410,8 @@ kubectl exec -n kube-system etcd-<a-control-plane-node-name> -- etcdutl \
   snapshot restore /var/lib/etcd-backup-demo.db --data-dir=/var/lib/etcd-restore-test
 ```
 
-**Expected output**: `endpoint status` puts `VERSION` and `STORAGE
-VERSION` side by side in the same row, so which number is which is
-unambiguous straight from etcd's own output, no inference required:
+**Expected output**: `endpoint status` shows both version numbers side
+by side:
 
 ```
 $ kubectl exec -n kube-system etcd-k8s-lab-ha-control-plane-control-plane -- etcdctl \
@@ -462,10 +425,8 @@ $ kubectl exec -n kube-system etcd-k8s-lab-ha-control-plane-control-plane -- etc
 +------------------------+------------------+---------+-----------------+---------+--------+-----------------------+--------+-----------+------------+-----------+------------+--------------------+--------+--------------------------+-------------------+
 ```
 
-The snapshot then saves cleanly, and its `etcdutl` status check reports
-real numbers - not placeholders - though its `VERSION` column is the
-table's *storage* version (`3.6.0`), not the binary version (`3.6.8`)
-that same table just showed:
+The snapshot saves, and `etcdutl snapshot status` describes the file.
+Its `VERSION` column is the storage version, `3.6.0`:
 
 ```
 $ kubectl exec -n kube-system etcd-k8s-lab-ha-control-plane-control-plane -- etcdctl \
@@ -485,15 +446,11 @@ $ kubectl exec -n kube-system etcd-k8s-lab-ha-control-plane-control-plane -- etc
 +----------+----------+------------+------------+---------+
 ```
 
-Running `snapshot status` under `etcdctl` instead - the natural
-mistake to make from muscle memory on an older etcd version, where it
-did live there - doesn't error at all; it silently prints the
-`snapshot` subcommand's help text instead of a status table, which is
-a worse failure mode than an error would be, precisely because nothing
-about it looks like failure at a glance. `etcdutl snapshot restore` into the new directory
-succeeds and produces a real, usable etcd data directory - confirmed
-by its contents, `snap/` and `wal/`, the same two subdirectories any
-running etcd member's own data directory has:
+A common mistake from older etcd versions is to run `snapshot status`
+with `etcdctl`. It doesn't fail with an error: it prints the help text
+for `etcdctl snapshot` instead, which is easy to miss.
+
+`etcdutl snapshot restore` creates the new data directory:
 
 ```
 $ kubectl exec -n kube-system etcd-k8s-lab-ha-control-plane-control-plane -- etcdutl \
@@ -501,51 +458,43 @@ $ kubectl exec -n kube-system etcd-k8s-lab-ha-control-plane-control-plane -- etc
 {"level":"info","msg":"restored snapshot","...","data-dir":"/var/lib/etcd-restore-test"}
 ```
 
-(Confirming the restored directory's actual contents needed a detour
-- the etcd container itself ships no shell and no coreutils at all,
-`kubectl exec ... ls` fails the same "executable file not found" way
-chapter 10's `pause` container did, so the contents were checked via
-the node's own filesystem instead, at `/proc/<container-pid>/root/var/lib/etcd-restore-test/`
-- `snap` and `wal` present, exactly as a real etcd data directory
-should have.)
+The new directory contains `snap/` and `wal/`, the same two
+subdirectories as a running member's data directory. (Checking that
+takes a detour: the etcd image has no shell and no `ls`, so `kubectl
+exec ... ls` fails with "executable file not found", as with chapter
+10's `pause` container. The contents were checked from the node instead,
+under `/proc/<container-pid>/root/var/lib/etcd-restore-test/`.)
 
-`kubectl get nodes` stayed at 5/5 `Ready` throughout every step above
-- restoring into a separate directory genuinely never touched the
-live, running etcd member.
+All 5 nodes stayed `Ready` throughout: restoring into a separate
+directory doesn't affect the running etcd.
 
-Backup and restore covers recovering from disaster - the last
-operational skill this topology exists to support is the routine case:
-moving the whole cluster to a newer version.
+Backups are for disasters. The last task is a routine one: upgrading the
+cluster to a newer Kubernetes version.
 
 ### Cluster upgrades
 
-**Why**: `kubeadm upgrade` is the real mechanism behind a version
-bump, not a rolling image swap you script yourself - it's
-version-skew-aware and sequences the work in a fixed order: `kubeadm
-upgrade plan` first (a dry run against the currently-running version,
-mutates nothing), then `kubeadm upgrade apply <version>` on exactly
-*one* control-plane node (rewrites that node's static pod manifests
-and waits for the new versions to come up healthy), then `kubeadm
-upgrade node` on every *other* control-plane node (syncing to what the
-first node already decided, not re-deciding anything), and finally
-each node's own kubelet/kubeadm/kubectl packages get upgraded via the
-OS package manager - entirely outside kubeadm's control - before that
-node's kubelet is restarted and it's uncordoned. Worth checking
-directly what `kubeadm upgrade plan` actually does against this
-cluster before assuming anything about it, and it's a genuinely good
-example of why: the reasonable-sounding assumption going in here was
-that `kubeadm upgrade plan` would report nothing available, since this
-repo's `kind` node image bakes in exactly one Kubernetes version
-(`kindest/node:v1.36.1`, chapter 1's pinning) and doesn't ship any
-other version's binaries locally. That assumption turned out to be
-wrong, and specifically wrong in a way worth naming: `upgrade plan`
-doesn't check what's installed locally at all - it queries the public
-Kubernetes release feed over the internet and compares version
-numbers, entirely independent of what binaries the node image actually
-has on disk to satisfy an upgrade with.
+**Why**: on a kubeadm cluster, upgrades go through `kubeadm upgrade`,
+which knows the version-skew rules and does the steps in a fixed order:
 
-**Example**: run the real, non-mutating first step against this
-cluster's actual pinned version:
+1. `kubeadm upgrade plan` checks what you can upgrade to. It changes
+   nothing.
+2. `kubeadm upgrade apply <version>` runs on *one* control-plane node.
+   It rewrites that node's static Pod manifests and waits for the new
+   versions to come up healthy.
+3. `kubeadm upgrade node` runs on every other control-plane node, and
+   copies what the first node decided.
+4. On each node, you upgrade the kubelet, kubeadm and kubectl packages
+   with the operating system's package manager (kubeadm doesn't do
+   this), restart the kubelet, and uncordon the node.
+
+You might expect `kubeadm upgrade plan` to find nothing on this cluster,
+because the kind node image contains just one Kubernetes version
+(`v1.36.1`, chapter 1). It does find something: `upgrade plan` doesn't
+look at what's installed on the node. It checks the public Kubernetes
+release list over the internet and compares version numbers.
+
+**Example**: check the running versions, then run the planning step,
+which changes nothing:
 
 ```
 kubectl exec -n kube-system kube-apiserver-<a-control-plane-node-name> -- kube-apiserver --version
@@ -553,9 +502,8 @@ docker exec <a-control-plane-container> kubeadm version
 docker exec <a-control-plane-container> kubeadm upgrade plan
 ```
 
-**Expected output**: not "nothing to upgrade" - a real, live-fetched
-target version, because the node container has outbound internet
-access and `kubeadm upgrade plan` uses it:
+**Expected output**: a real upgrade target, fetched from the internet
+by the node:
 
 ```
 $ kubectl exec -n kube-system kube-apiserver-k8s-lab-ha-control-plane-control-plane -- kube-apiserver --version
@@ -598,39 +546,23 @@ You can now apply the upgrade by executing the following command:
 	kubeadm upgrade apply v1.36.4
 ```
 
-A real newer patch release (`v1.36.4`) exists upstream and `kubeadm`
-found it correctly - it even applied its own minor-version skew policy
-on the way, noting a newer `v1.37.0` exists but falling back to the
-latest patch within the *current* minor series (`stable-1.36`) rather
-than jumping a minor version, which `kubeadm upgrade` never does in
-one step by design. Two rows are worth reading carefully rather than
-assuming they follow the same pattern as the rest: CoreDNS
-(`v1.14.2 -> v1.14.2`) and etcd (`3.6.8-0 -> 3.6.8-0`) both show
-**identical** current and target versions - no bump proposed for
-either, because a v1.36.1 -> v1.36.4 patch release doesn't necessarily
-require every bundled component to move in lockstep, only the ones the
-release actually changed. `3.6.8-0` here is the real running etcd
-binary version (the trailing `-0` is the container image's own
-build-revision suffix, not part of etcd's semver) - the same number
-this chapter's etcd backup/restore section's `endpoint status` table
-already showed in its `VERSION` column, so `kubeadm` isn't reporting
-anything new. It's a genuinely different number from the `3.6.0` that
-same section's `snapshot save`/`snapshot status` output also showed,
-for the reason already covered there: that's etcd's separately-tracked
-storage version, not the binary version - the two numbers aren't
-expected to match, and don't need to. Nothing about
-running inside `kind` blocked or altered any of this: it's the
-identical live version-check a real cluster with internet access would
-get. What running `kubeadm upgrade apply v1.36.4` here would actually
-hit is a different, later failure - the node image has no `v1.36.4`
-kubelet/control-plane binaries locally to switch to, since (chapter 1)
-this image bakes in exactly one pinned version - but that's a distinct
-problem from what `upgrade plan` itself checks, and this section
-didn't run `apply` against the live cluster to trigger it, since doing
-so has a real chance of leaving a control-plane node in a
-half-upgraded state for no additional teaching value beyond what
-`plan`'s own real, successful network round-trip already demonstrates.
-In an air-gapped or otherwise offline environment, this same command
-would instead fail (or hang) trying to reach the release feed - worth
-knowing in advance rather than discovering it mid-upgrade on a real
-cluster.
+`kubeadm` found a newer patch release, `v1.36.4`. It stays within the
+current minor version (1.36), because `kubeadm upgrade` never skips to
+the next minor version in one step.
+
+Two rows don't change: CoreDNS (`v1.14.2`) and etcd (`3.6.8-0`) have
+the same current and target versions. A patch release only moves the
+components it actually changed. `3.6.8-0` is the running etcd release
+(the `-0` is the image's build suffix), the same `3.6.8` that `endpoint
+status` showed in the previous section, not the `3.6.0` storage version.
+
+Running inside kind changed nothing about `upgrade plan`: a real
+cluster with internet access gets the same check. `kubeadm upgrade
+apply v1.36.4` would be a different story, because the node image has
+no `v1.36.4` binaries to switch to. This chapter doesn't run it, since a
+failed apply could leave a control-plane node half-upgraded and wouldn't
+teach anything more than `plan` already has.
+
+On a cluster without internet access, `kubeadm upgrade plan` fails or
+hangs trying to reach the release list. Better to know that before you
+start an upgrade.

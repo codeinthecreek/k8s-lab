@@ -1,60 +1,61 @@
 # 14. Advanced and supplementary topics
 
-Chapters 1-13 build in concept-dependency order, each one assuming
-everything before it. This chapter doesn't continue that chain - it
-collects four topics that don't fit anywhere earlier for two different
-reasons. Dynamic Resource Allocation reached GA late enough (Kubernetes
-1.34) that no earlier chapter's "current mechanism" framing could have
-included it without being written after the fact. Scheduling Profiles,
-Headlamp, and krew aren't version-gated the same way, but they're
-supplementary tooling and configuration surface rather than core object
-model - the kind of thing worth knowing once chapters 1-13's foundation
-is in place, not before it.
+Chapters 1-13 build on each other in order. This chapter collects four
+topics that don't fit that sequence:
+
+- **Scheduling Profiles**: configuring the scheduler itself, rather than
+  a Pod's placement.
+- **Dynamic Resource Allocation** (DRA): the newer API for requesting
+  devices such as GPUs. It became stable (GA) in Kubernetes 1.34.
+- **Headlamp**: a web UI for the cluster.
+- **krew**: a plugin manager for `kubectl`.
+
+None of them is needed for the earlier chapters, and each is easier to
+follow once those are in place.
 
 ### From `--policy-config-file` to `KubeSchedulerConfiguration`
 
-**Why**: chapter 7 covered every mechanism a Pod spec uses to influence
-its own placement - affinity, taints, resource requests. This section
-covers the other side: how the scheduler *itself* is configured, which
-chapter 7 deliberately left out since it's not something a Pod manifest
-touches. Older material (including some LFS258-era course content)
-describes a `kind: Policy` JSON file passed via `--policy-config-file` -
-that flag was deprecated as of Kubernetes v1.23 and is fully removed;
-`kube-scheduler --help` on this cluster's v1.36.1 doesn't mention it at
-all. The current mechanism is `KubeSchedulerConfiguration`
+**Why**: chapter 7 covered how a Pod influences its own placement
+(affinity, taints, resource requests). This section covers the other
+side: how the scheduler itself is configured.
+
+Older material describes a `kind: Policy` JSON file passed with
+`--policy-config-file`. That flag was deprecated in Kubernetes v1.23 and
+has since been removed; `kube-scheduler --help` on this cluster
+(v1.36.1) doesn't mention it. Today the scheduler takes a
+`KubeSchedulerConfiguration` file
 (`apiVersion: kubescheduler.config.k8s.io/v1`, stable since v1.25),
-passed via `kube-scheduler --config <file>`, built around the
-**Scheduling Profiles** model: named profiles, each running the same
-12-extension-point pipeline (`queueSort`, `preFilter`, `filter`,
-`postFilter`, `preScore`, `score`, `reserve`, `permit`, `preBind`,
-`bind`, `postBind`, plus the `multiPoint` shorthand that wires a plugin
-into several of these at once) where plugins can be added, removed, or
-reconfigured. Conceptually this is the same filter-then-score pipeline
-older material calls "predicates and priorities" - reorganized around a
-plugin system, not a different idea. A single `kube-scheduler` process
-can run more than one profile at once, each with its own name; a Pod
-picks which one handles it via `spec.schedulerName` (defaulting to
-`default-scheduler` if unset, which is why nothing before this chapter
-ever had to mention it).
+passed with `kube-scheduler --config <file>`.
 
-One flag worth naming before touching anything: when `--config` is set,
-several other flags become dead weight rather than errors -
-`kube-scheduler --help` marks `--kubeconfig`, `--kube-api-qps`, and a
-handful of others as "DEPRECATED: ... ignored if a config file is
-specified in --config." The client connection those flags used to
-configure moves into the config file's own `clientConnection` section
-instead.
+That file defines one or more **scheduling profiles**. Each profile is a
+named scheduling pipeline made of plugins. The pipeline has fixed stages
+(extension points) such as `filter`, which rules out nodes, and `score`,
+which ranks the ones left, and a profile can add, remove or reconfigure
+the plugins at each stage. (The full list is `queueSort`, `preFilter`,
+`filter`, `postFilter`, `preScore`, `score`, `reserve`, `permit`,
+`preBind`, `bind` and `postBind`, plus `multiPoint`, a shorthand that
+enables a plugin at every stage it supports.) Older material calls the
+same filter-then-score idea "predicates and priorities".
 
-**Example**: this cluster's `default` profile currently runs
-`kube-scheduler` with plain flags, no `--config` at all - confirm that
-first, live, before changing anything:
+One scheduler process can run several profiles at once. A Pod picks one
+with `spec.schedulerName`. If it's unset, the Pod gets
+`default-scheduler`, which is why no earlier chapter had to mention it.
+
+When `--config` is set, some other flags are ignored rather than
+rejected. `kube-scheduler --help` marks `--kubeconfig`,
+`--kube-api-qps` and a few others "DEPRECATED: ... ignored if a config
+file is specified in --config". Their settings move into the config
+file's `clientConnection` section.
+
+**Example**: on the `default` profile's cluster, the scheduler runs
+with plain flags and no `--config`. Check its static Pod manifest:
 
 ```
 docker exec k8s-lab-default-control-plane cat /etc/kubernetes/manifests/kube-scheduler.yaml
 ```
 
-**Expected output**: the static pod kubeadm generated, `command` built
-entirely from individual flags:
+**Expected output**: the manifest kubeadm generated, with the command
+made of individual flags:
 
 ```
     command:
@@ -66,79 +67,54 @@ entirely from individual flags:
     - --leader-elect=true
 ```
 
-Wiring in a second, named profile means editing this static pod
-directly, the same kind of live `docker exec` poke chapters 10-12
-already use for `crictl`, `journalctl`, and `kube-apiserver --help` -
-this isn't a `kubectl apply -f`, it's a change to the control-plane
-node's own filesystem. `kubectl` has no verb for editing a static pod
-manifest; kubelet is the only thing watching
-`/etc/kubernetes/manifests/`, and it reacts to file changes there
-directly.
+To add a profile, you edit this static Pod manifest on the
+control-plane node. `kubectl` can't do it: only the kubelet watches
+`/etc/kubernetes/manifests/`, and it restarts the Pod whenever a file
+there changes. So the steps below use `docker exec` and `docker cp`, as
+chapters 10-12 did for `crictl` and `journalctl`.
 
-**A risk callout worth stating plainly before touching anything**:
-this is a genuinely higher-risk hands-on edit than chapter 12's own
-capstone example of live control-plane surgery - the etcd
-data-directory swap that chapter verifies save-and-restore-to-a-new-
-directory for, but deliberately only *describes* rather than performs
-against the running lab cluster. Editing a static pod manifest in
-place is a step further than that: it's live-editing the file that
-defines a currently-running control-plane component, not working
-against a separate scratch directory next to it. It's still the right
-call to actually perform here, for three concrete reasons this
-section leans on: the revert path is fully documented and exercised
-later in this same section (not just asserted), kubelet's own reconcile
-loop restarts the static pod automatically on every manifest write -
-no separate "apply the change" step to get wrong - and the manifest
-edit itself touches no cluster state (etcd, any object this tutorial
-has created) at all, only which scheduler binary configuration this
-one control-plane node's kube-scheduler container starts with; the
-demo Deployments this section applies afterward to prove the effect
-are ordinary, disposable objects like any other chapter's, not part of
-what makes the edit itself risky. Chapter 12
-chose description over demonstration specifically because a live etcd
-directory swap risks the cluster's actual data; nothing here carries
-that same downside.
+**This edits a running control-plane component.** It's safe enough in
+this lab: the change only affects how the scheduler starts, it doesn't
+touch etcd or any object in the cluster, and the end of this section
+puts the original manifest back. On a real cluster, treat it with more
+care.
 
-**Before editing anything, back up the current manifest - but not into
-`/etc/kubernetes/manifests/` itself.** kubelet treats every file in that
-directory as a static pod definition; a backup copy left in the same
-directory, carrying the same `metadata.name: kube-scheduler`, competes
-with the real one for the same pod identity. (This isn't a hypothetical
-caution - it's what happened once while preparing this chapter: a
-backup saved as `kube-scheduler.yaml.orig-backup` inside the manifests
-directory silently won a race against the intended edit, and the
-scheduler kept running its original flags for several checks afterward
-before `crictl inspect`'s reported container args caught the
-discrepancy.)
+**First, back up the current manifest, but not into
+`/etc/kubernetes/manifests/`.** The kubelet treats every file in that
+directory as a static Pod. A backup there has the same
+`metadata.name: kube-scheduler` as the real manifest, and the two
+compete; the backup can win, leaving the old scheduler running.
+(That happened while this chapter was being written.) Put the backup one
+directory up:
 
 ```
 docker exec k8s-lab-default-control-plane cp /etc/kubernetes/manifests/kube-scheduler.yaml /etc/kubernetes/kube-scheduler.yaml.orig-backup
 ```
 
-Now stage a `KubeSchedulerConfiguration` defining a second profile,
-`bin-packing-scheduler`, alongside the untouched `default-scheduler`
-profile - `tutorial/examples/scheduling-profiles/scheduler-config-naive.yaml`
-scores `NodeResourcesFit` with `MostAllocated` instead of the compiled-in
-default (`LeastAllocated`), and changes nothing else:
+Now copy in a `KubeSchedulerConfiguration` with two profiles: the
+unchanged `default-scheduler`, and a new one called
+`bin-packing-scheduler`.
+[`scheduler-config-naive.yaml`](examples/scheduling-profiles/scheduler-config-naive.yaml)
+changes one thing in the new profile: the `NodeResourcesFit` plugin
+scores nodes with `MostAllocated` (prefer the fullest node) instead of
+the default `LeastAllocated` (prefer the emptiest). Copy it, and an
+edited scheduler manifest, onto the control-plane node:
 
 ```
 docker cp tutorial/examples/scheduling-profiles/scheduler-config-naive.yaml k8s-lab-default-control-plane:/etc/kubernetes/scheduler-config.yaml
 docker cp tutorial/examples/scheduling-profiles/kube-scheduler-static-pod.yaml k8s-lab-default-control-plane:/etc/kubernetes/manifests/kube-scheduler.yaml
 ```
 
-The second file is a copy of kubeadm's own manifest with two additions:
-`--config=/etc/kubernetes/scheduler-config.yaml` on the command line,
-and a matching `hostPath` volume/mount for that file - everything else
-(image tag, probes, the other flags) is unchanged. kubelet notices the
-manifest change and restarts the static pod automatically, no `kubectl`
-involved:
+The second file is kubeadm's manifest with two additions: the flag
+`--config=/etc/kubernetes/scheduler-config.yaml`, and a `hostPath`
+volume that mounts that file. Everything else is unchanged. The kubelet
+sees the new manifest and restarts the scheduler:
 
 ```
 kubectl get pods -n kube-system -l component=kube-scheduler
 ```
 
-**Expected output**: back to `1/1 Running` within a few seconds of the
-`docker cp`:
+**Expected output**: `1/1 Running` again within a few seconds:
 
 ```
 NAME                                           READY   STATUS    RESTARTS   AGE
@@ -147,28 +123,24 @@ kube-scheduler-k8s-lab-default-control-plane   1/1     Running   0          9s
 
 ### Two profiles, one Pod field: `spec.schedulerName`
 
-**Why**: with both profiles live in the same process, a Pod's own
-`spec.schedulerName` field is what picks between them - nothing at the
-cluster level routes Pods to a profile, each Pod says which one it
-wants. This is the natural place to see whether `MostAllocated` actually
-changes anything observable, using both workers of this repo's `default`
-profile as the test bed.
+**Why**: with both profiles running, each Pod chooses one with its
+`spec.schedulerName`. Nothing at the cluster level assigns Pods to
+profiles. Does `MostAllocated` change where Pods land? The `default`
+profile's two workers make a simple test.
 
-**Example**: six replicas under `default-scheduler`
-(`tutorial/examples/scheduling-profiles/spread-demo-deployment.yaml`,
-`cpu: "1"` per replica, `schedulerName: default-scheduler`), then the
-same shape under the new profile
-(`tutorial/examples/scheduling-profiles/pack-demo-deployment.yaml`,
-`schedulerName: bin-packing-scheduler`) - deleting the first before
-applying the second so the two runs don't share the same nodes at once:
+**Example**: [`spread-demo-deployment.yaml`](examples/scheduling-profiles/spread-demo-deployment.yaml)
+runs six replicas, each requesting `cpu: "1"`, with
+`schedulerName: default-scheduler`.
+[`pack-demo-deployment.yaml`](examples/scheduling-profiles/pack-demo-deployment.yaml)
+is the same with `schedulerName: bin-packing-scheduler`. Run the first:
 
 ```
 kubectl apply -f tutorial/examples/scheduling-profiles/spread-demo-deployment.yaml
 kubectl get pods -l app=scheduling-profiles-spread-demo -o wide
 ```
 
-**Expected output**: `LeastAllocated`'s usual behavior, spread evenly
-across both workers:
+**Expected output**: the default profile spreads them evenly across both
+workers:
 
 ```
 NAME                                              READY   STATUS    RESTARTS   AGE   NODE
@@ -180,8 +152,8 @@ scheduling-profiles-spread-demo-5fc8d4dd6-s6wkz   1/1     Running   0          1
 scheduling-profiles-spread-demo-5fc8d4dd6-sq5ns   1/1     Running   0          12s   k8s-lab-default-worker
 ```
 
-Three and three. Now delete it and run the bin-packing profile against
-the identical shape:
+Three and three. Delete it, and run the same shape with the bin-packing
+profile:
 
 ```
 kubectl delete -f tutorial/examples/scheduling-profiles/spread-demo-deployment.yaml
@@ -189,9 +161,8 @@ kubectl apply -f tutorial/examples/scheduling-profiles/pack-demo-deployment.yaml
 kubectl get pods -l app=scheduling-profiles-pack-demo -o wide
 ```
 
-**Expected output** - and this is the genuinely useful surprise, not a
-mistake in the setup: still three and three, not the six-on-one-node
-result `MostAllocated` alone would suggest:
+**Expected output**: still three and three. You might expect all six on
+one node, and the setup isn't wrong; the next section explains:
 
 ```
 NAME                                              READY   STATUS    RESTARTS   AGE   NODE
@@ -205,31 +176,26 @@ scheduling-profiles-pack-demo-7876b68494-w9v9c   1/1     Running   0          19
 
 ### Why the naive config didn't bin-pack: a competing default plugin
 
-**Why**: `pluginConfig` for `NodeResourcesFit` only changes how *that
-one plugin* scores a node - it doesn't touch anything else in the
-profile's plugin list, and every profile still gets the rest of the
-default plugin set unless something explicitly removes it. One of those
-defaults, `PodTopologySpread`, applies a system-wide soft spread
-constraint (`topologyKey: kubernetes.io/hostname`,
-`whenUnsatisfiable: ScheduleAnyway`) to every Pod automatically, with no
-`topologySpreadConstraints` needed in the Pod spec at all - and at its
-default weight, it was actively outvoting `NodeResourcesFit`'s
-bin-packing signal.
+**Why**: the `pluginConfig` for `NodeResourcesFit` changes how that one
+plugin scores nodes. Every other default plugin is still in the
+profile, and still votes. One of them, `PodTopologySpread`, applies a
+built-in soft rule to every Pod: spread Pods across nodes
+(`topologyKey: kubernetes.io/hostname`,
+`whenUnsatisfiable: ScheduleAnyway`), even if the Pod has no
+`topologySpreadConstraints` of its own. Its vote outweighed the
+bin-packing score.
 
-**Example**: dump the scheduler's own effective configuration (writing
-it out from a separate, disposable container rather than the live
-scheduler) to see the weights side by side. Run it from the repo root,
-with the same kube-scheduler version (v1.36.1) this cluster's control
-plane runs. The config file's `clientConnection.kubeconfig` points at
-`/etc/kubernetes/scheduler.conf`, and that path has to hold a valid
-kubeconfig: with no file there the command stops with `stat
-/etc/kubernetes/scheduler.conf: no such file or directory`, and with an
-empty file it stops with `invalid configuration: no configuration has
-been provided, try setting KUBERNETES_MASTER environment variable`. The
-dump completes with a kubeconfig that has no credentials and only a
-placeholder server address, so the first three lines build exactly that with
-`kubectl config` in a temporary file (nothing secret is written) and the
-container mounts it at that path; the last line deletes it again:
+**Example**: to see the plugin weights, have a scheduler print its full
+effective configuration. This runs a separate, throwaway scheduler
+container of the same version (v1.36.1) with the naive config, not the
+live one. Run it from the repo root.
+
+The config file's `clientConnection.kubeconfig` points at
+`/etc/kubernetes/scheduler.conf`, so the container needs a valid
+kubeconfig there, or the command stops with an error. It doesn't need a
+real one, though, so the first three lines create a kubeconfig in a
+temporary file with only a placeholder server address and no
+credentials; the last line deletes it:
 
 ```
 kubectl config --kubeconfig=/tmp/k8s-lab-scheduler.conf set-cluster dump --server=https://127.0.0.1:1
@@ -243,16 +209,15 @@ docker run --rm \
 rm /tmp/k8s-lab-scheduler.conf
 ```
 
-The dump is long (both profiles, 20 plugins each in `multiPoint.enabled`),
-so the `grep` keeps only the three plugins this section is about, taken
-from the first profile; if nothing prints, run the `docker run` part
-without the filter to see the error.
+The full dump is long (two profiles, 20 plugins each), so the `grep`
+keeps the three plugins this section needs, from the first profile. If
+nothing prints, run the `docker run` part without the filter to see the
+error.
 
-**Expected output** (three confirmations from `kubectl config`, then the
-three plugins' compiled-in default weights - the third, `DynamicResources`,
-is the one the DRA section below comes back to; `bin-packing-scheduler`,
-the second profile in the dump, prints the same three weights, because the
-config only changes `NodeResourcesFit`'s `pluginConfig`):
+**Expected output**: three confirmations from `kubectl config`, then the
+three plugins' default weights. (The second profile shows the same
+weights, since the config only changed `NodeResourcesFit`'s scoring.
+`DynamicResources` comes back in the DRA section below.)
 
 ```
 Cluster "dump" set.
@@ -266,25 +231,21 @@ Switched to context "dump".
         weight: 2
 ```
 
-`PodTopologySpread` outweighs `NodeResourcesFit` two to one by default -
-which is exactly why the "naive" config above changed how each *node*
-was scored without changing where the pods actually landed: the spread
-constraint's score dominated the vote.
-`tutorial/examples/scheduling-profiles/scheduler-config.yaml` fixes
-this by disabling `PodTopologySpread` outright for the
-`bin-packing-scheduler` profile's `score` phase (it's still active for
-`default-scheduler` - this is a per-profile plugin list, not a global
-one):
+`PodTopologySpread` has twice the weight of `NodeResourcesFit`, so its
+spreading won over bin-packing.
+[`scheduler-config.yaml`](examples/scheduling-profiles/scheduler-config.yaml)
+fixes that by disabling `PodTopologySpread` in the `score` stage of the
+`bin-packing-scheduler` profile only. `default-scheduler` keeps it: each
+profile has its own plugin list.
 
 ```
 docker cp tutorial/examples/scheduling-profiles/scheduler-config.yaml k8s-lab-default-control-plane:/etc/kubernetes/scheduler-config.yaml
 ```
 
-Changing the config file's *content* alone isn't enough to take effect -
-`kube-scheduler` reads it once at startup, and kubelet only watches the
-static pod *manifest* file, not whatever it happens to mount. Forcing a
-restart means touching the manifest itself - here, a harmless label
-addition works as well as any other change:
+Copying in a new config file isn't enough. The scheduler reads it only
+at startup, and the kubelet restarts the static Pod only when the
+*manifest* changes, not a file the manifest mounts. So make a small
+change to the manifest, here adding a label:
 
 ```
 docker exec k8s-lab-default-control-plane sh -c "sed -i 's/tier: control-plane/tier: control-plane\n    scheduler-config-generation: \"2\"/' /etc/kubernetes/manifests/kube-scheduler.yaml"
@@ -293,8 +254,7 @@ kubectl apply -f tutorial/examples/scheduling-profiles/pack-demo-deployment.yaml
 kubectl get pods -l app=scheduling-profiles-pack-demo -o wide
 ```
 
-**Expected output**: all six replicas on the same node this time - the
-bin-packing result the naive config implied but never actually produced:
+**Expected output**: all six replicas on one node this time:
 
 ```
 NAME                                             READY   STATUS    RESTARTS   AGE   NODE
@@ -306,25 +266,19 @@ scheduling-profiles-pack-demo-7876b68494-st766   1/1     Running   0          15
 scheduling-profiles-pack-demo-7876b68494-tjw6l   1/1     Running   0          15s   k8s-lab-default-worker
 ```
 
-Same Deployment shape, same node capacities, same cluster - the only
-thing that changed between the two `pack-demo` runs was whether
-`PodTopologySpread` was still scoring alongside `NodeResourcesFit`. A
-custom scoring strategy on one plugin is never evaluated in isolation;
-every other plugin still in the profile's `score` phase gets a vote too.
+The only difference between the two `pack-demo` runs was whether
+`PodTopologySpread` was still scoring. A scoring change to one plugin is
+never the whole story: every other plugin in the `score` stage still
+gets a vote.
 
 ### Reverting: back to a single default profile
 
-**Why**: this section's edits are live, in-session changes to the
-running `default` cluster's control-plane node, not a change to any file
-this repo tracks - unlike everything else in this chapter, leaving them
-in place would mean the cluster no longer matches what `make up
-PROFILE=default` actually produces. This is worth its own explicit
-revert step rather than folding into a general teardown, the same way
-chapter 12 treats a live etcd directory swap as high-enough-stakes to
-document on its own.
+**Why**: these edits changed the running cluster's control-plane node,
+not any file in this repo, so the cluster no longer matches what
+`make up PROFILE=default` creates. Put it back.
 
-**Example**: delete the demo Deployment, restore the backed-up manifest
-over the edited one, and remove the now-unused config file:
+**Example**: delete the demo Deployment, copy the backup over the
+edited manifest, and remove the backup and the config file:
 
 ```
 kubectl delete -f tutorial/examples/scheduling-profiles/pack-demo-deployment.yaml
@@ -333,17 +287,15 @@ docker exec k8s-lab-default-control-plane rm -f /etc/kubernetes/kube-scheduler.y
 kubectl get pods -n kube-system -l component=kube-scheduler
 ```
 
-**Expected output**: kubelet restarts the static pod once more, and this
-time the running container's actual process args - confirmed via
-`crictl inspect`, not just the manifest file's own text - are back to
-the original, `--config`-free flags:
+**Expected output**: the kubelet restarts the scheduler once more. Its
+running process is back to the original flags, without `--config`, as
+`crictl inspect` on the node shows:
 
 ```
 ['kube-scheduler', '--authentication-kubeconfig=/etc/kubernetes/scheduler.conf', '--authorization-kubeconfig=/etc/kubernetes/scheduler.conf', '--bind-address=127.0.0.1', '--kubeconfig=/etc/kubernetes/scheduler.conf', '--leader-elect=true']
 ```
 
-A plain sanity Pod confirms ordinary scheduling still works with no
-named `schedulerName` at all:
+A Pod with no `schedulerName` still gets scheduled:
 
 ```
 kubectl run scheduling-profiles-sanity --image=busybox --restart=Never --command -- sleep 5
@@ -355,36 +307,29 @@ NAME                         READY   STATUS    RESTARTS   AGE   NODE
 scheduling-profiles-sanity   1/1     Running   0          5s    k8s-lab-default-worker2
 ```
 
-With the cluster back to its default scheduler profile, this chapter
-moves on to an entirely unrelated, version-gated topic.
+The cluster is back to a single default profile. The next topic is
+unrelated.
 
 ## Dynamic Resource Allocation (`resource.k8s.io`)
 
-**This section is optional.** Everything through "What's live and
-unconditional" below needs nothing beyond this repo's `default` profile
-as-is. The rest - seeing a `ResourceClaim` actually get allocated -
-depends on installing a real, external, unvendored Helm chart
-(`kubernetes-sigs/dra-example-driver`), which is a different category of
-dependency from anything else in this tutorial: everything under
-`manifests/` is fetched from an exact upstream tag and applied as part
-of a profile's own `manifests.txt` (see DESIGN.md); this driver is
-neither. Skip straight to "Cluster web UI: Headlamp" below if seeing the
-live objects is enough.
+**This section is optional.** The first part, "What's there with no
+driver", needs only the `default` profile. The rest installs an external
+Helm chart, `kubernetes-sigs/dra-example-driver`, to see a device
+actually allocated. Unlike everything under `manifests/`, that chart is
+not pinned in this repo or applied by a profile (see DESIGN.md). Skip to
+"Cluster web UI: Headlamp" if the first part is enough.
 
-### What's live and unconditional, no driver required
+### What's there with no driver
 
-**Why**: Dynamic Resource Allocation (DRA) is how a Pod requests
-hardware - GPUs, or anything else a vendor writes a driver for - by
-*attribute* rather than by a fixed resource name like `nvidia.com/gpu`.
-Its core API group, `resource.k8s.io`, went GA in Kubernetes 1.34; this
-repo's pinned node image is v1.36.1, comfortably past that, and the
-group appears with no feature gates, no `--runtime-config`, nothing set
-in either profile's `cluster.yaml` - it's compiled into `kube-apiserver`
-unconditionally on any 1.34+ cluster, whether or not a single device
-driver is ever installed.
+**Why**: Dynamic Resource Allocation (DRA) lets a Pod request hardware,
+such as a GPU, by its *attributes* rather than by a resource name and a
+count like `nvidia.com/gpu: 1` (chapters 15-18). Its API group,
+`resource.k8s.io`, went GA in Kubernetes 1.34. This cluster runs
+v1.36.1, and the group is there without any feature gates or settings in
+`cluster.yaml`: it's built into the apiserver, whether or not any device
+driver is installed.
 
-**Example**: confirm the group and its types exist right now, with
-nothing installed:
+**Example**: list the group's types, with nothing installed:
 
 ```
 kubectl api-resources --api-group=resource.k8s.io
@@ -392,8 +337,7 @@ kubectl get --raw /apis/resource.k8s.io
 kubectl get deviceclasses,resourceslices,resourceclaims -A
 ```
 
-**Expected output**: four real, registered types, and confirmation
-they're empty - not missing, just unused:
+**Expected output**: four types, all present and all empty:
 
 ```
 NAME                     SHORTNAMES   APIVERSION           NAMESPACED   KIND
@@ -407,40 +351,33 @@ resourceslices                        resource.k8s.io/v1   false        Resource
 No resources found
 ```
 
-**A note back to chapter 11**: `resource.k8s.io` is a *built-in* API
-group, registered directly in `kube-apiserver` the same way `batch` or
-`discovery.k8s.io` are - it is neither a CRD (chapter 11's main subject)
-nor an aggregated API (chapter 11's closing aside, where `metrics.k8s.io`
-is proxied to a separate Deployment via an `APIService`). Nothing here
-proxies to another process and nothing here was registered by applying
-a manifest; it's part of the apiserver binary itself, unconditionally,
-on any cluster new enough. Worth stating plainly since chapter 11 covers
-both of the *other* two ways a new API group can show up, and DRA is a
-good example of the third: a group that ships in the apiserver but does
-nothing without something else - here, a device driver - actually using
-it.
+**How this differs from chapter 11.** Chapter 11 showed two ways a new
+API group appears: a CRD, and an aggregated API (such as
+`metrics.k8s.io`, which the apiserver forwards to another Deployment).
+`resource.k8s.io` is neither. It's built into the apiserver, like
+`batch` or `discovery.k8s.io`, and nothing was applied to create it. It
+just does nothing until a device driver uses it.
 
 ### Seeing it allocate a real device
 
-**Why**: `resource.k8s.io`'s types are inert without a driver publishing
-`ResourceSlice` objects - nothing on a stock kind cluster has physical
-GPUs to expose. `kubernetes-sigs/dra-example-driver` exists specifically
-to fill that gap: a SIG-maintained reference driver that publishes mock
-"GPU" devices per node, built for exactly this kind of demo, not a
-production device driver. This chapter pins it at git tag **v0.4.0**
-(latest as of this writing) - its chart declares `kubeVersion:
-">=1.33.0-0"`, comfortably satisfied by this cluster's v1.36.1. Its
-default `values.yaml` points at a published image,
-`registry.k8s.io/dra-example-driver/dra-example-driver:v0.4.0` - the
-upstream README's own quickstart builds the driver image locally via
-`docker buildx`, but that's only needed for its own bundled kind-cluster
-demo script; installing straight from the chart's own defaults onto an
-existing cluster (this repo's `default` profile, in this case) pulls the
-already-published image instead, no local build step required.
+**Why**: the DRA types do nothing until a driver publishes
+`ResourceSlice` objects describing its devices, and a kind cluster has no
+real devices to publish. `kubernetes-sigs/dra-example-driver` fills the
+gap: a reference driver from a Kubernetes SIG that publishes fake "GPU"
+devices on each node. It's meant for demos like this one, not for
+production.
 
-**Example**: clone the driver at the pinned tag and install its Helm
-chart directly - no values overrides, so the validating webhook (which
-needs cert-manager) stays off, matching its documented default:
+This chapter uses its tag **v0.4.0**, the latest when this was written.
+Its chart requires Kubernetes 1.33 or later. The chart's default values
+use a published image,
+`registry.k8s.io/dra-example-driver/dra-example-driver:v0.4.0`, so
+installing it on an existing cluster needs no image build. (The
+upstream README builds the image locally, but only for its own
+kind-cluster demo script.)
+
+**Example**: clone the driver at that tag and install its chart with no
+value overrides. That leaves its validating webhook off, which is the
+default; the webhook would need cert-manager:
 
 ```
 git clone --depth 1 --branch v0.4.0 https://github.com/kubernetes-sigs/dra-example-driver.git
@@ -451,11 +388,9 @@ kubectl get deviceclass
 kubectl get resourceslices
 ```
 
-**Expected output**: one kubelet-plugin Pod per worker (this repo's
-`default` profile has two), a `DeviceClass` named `gpu.example.com` (the
-chart's default `deviceProfile: gpu`, turned into a driver name via
-`<profile>.example.com`), and one `ResourceSlice` per worker publishing
-its mock device:
+**Expected output**: one driver Pod per worker (the `default` profile
+has two), a `DeviceClass` called `gpu.example.com`, and one
+`ResourceSlice` per worker describing its fake device:
 
 ```
 NAME                                     READY   STATUS    RESTARTS   AGE
@@ -470,12 +405,12 @@ NAME                                                  NODE                      
 00000-gpu.example.com-k8s-lab-default-worker2-j7x2z   k8s-lab-default-worker2   gpu.example.com   k8s-lab-default-worker2
 ```
 
-Now request one, via
-`tutorial/examples/dra/dra-demo.yaml` - adapted from the driver's own
-`demo/examples/basic-resourceclaimtemplate` at the same tag: a
-`ResourceClaimTemplate` asking for one device from `gpu.example.com`,
-and a Pod that claims it through `spec.resourceClaims` plus a matching
-`resources.claims` entry on the container:
+Now ask for a device.
+[`dra-demo.yaml`](examples/dra/dra-demo.yaml) is adapted from the
+driver's `demo/examples/basic-resourceclaimtemplate` at the same tag. It
+has a `ResourceClaimTemplate` that asks for one device from
+`gpu.example.com`, and a Pod that uses it through `spec.resourceClaims`
+and a matching `resources.claims` entry on the container:
 
 ```
 kubectl apply -f tutorial/examples/dra/dra-demo.yaml
@@ -484,10 +419,10 @@ kubectl get resourceclaims -n dra-demo
 kubectl describe resourceclaims -n dra-demo
 ```
 
-**Expected output**: the Pod runs, and the `ResourceClaim` it generated
-(one per `resourceClaimTemplateName` reference, named after the Pod) is
-`allocated,reserved`, with the scheduler's actual decision recorded -
-which physical device, on which node's pool:
+**Expected output**: the Pod runs. Kubernetes created a
+`ResourceClaim` for it from the template (named after the Pod), and the
+claim is `allocated,reserved`. Its description records which device was
+chosen, from which node's pool:
 
 ```
 NAME           READY   STATUS    RESTARTS   AGE   NODE
@@ -508,18 +443,14 @@ dra-demo-pod-gpu-jvz8j   allocated,reserved   8s
     Resource:  pods
 ```
 
-The plugin responsible for that placement decision is `DynamicResources`
-- one of the same default `multiPoint` plugins the earlier section's
-effective-config dump already showed running alongside
-`NodeResourcesFit` and `PodTopologySpread`, at weight 2. A DRA claim
-isn't scheduled by a separate mechanism from everything else in this
-chapter - it's one more plugin in the identical pipeline, filtering
-nodes down to the ones whose `ResourceSlice`s can satisfy the claim, the
-same filter-then-score cycle chapter 7's affinity rules go through.
+The scheduler plugin that made this decision is `DynamicResources`,
+which appeared in the configuration dump earlier in this chapter. DRA
+claims aren't scheduled by a separate mechanism: `DynamicResources` is
+one more plugin in the same pipeline, ruling out nodes whose
+`ResourceSlice`s can't satisfy the claim.
 
-The device identity also reaches the container itself, injected as
-environment variables - real values the driver computed, not anything
-the Pod spec declared:
+The driver also tells the container which device it got, through
+environment variables the Pod spec never declared:
 
 ```
 kubectl exec -n dra-demo dra-demo-pod -- env | grep -i "gpu\|device"
@@ -535,9 +466,8 @@ GPU_DEVICE_0_TIMESLICE_INTERVAL=Default
 
 ### Teardown
 
-**Why**: like chapter 13's registry, this section's driver is real state
-outside anything `manifests.txt` manages - a Helm release, not part of
-any profile, that needs its own explicit removal.
+**Why**: the driver is a Helm release outside any profile, like
+chapter 13's registry, so it needs removing by hand.
 
 **Example**:
 
@@ -548,11 +478,9 @@ kubectl delete namespace dra-example-driver
 kubectl get resourceslices,deviceclass,resourceclaims,resourceclaimtemplates -A
 ```
 
-**Expected output**: deleting the namespace kills the kubelet-plugin
-Pods without giving them a chance to unpublish their own
-`ResourceSlice`s first - they're left behind as orphaned objects rather
-than being garbage-collected automatically, a real gap worth knowing
-about rather than assuming teardown is always clean:
+**Expected output**: some objects are left behind. Deleting the
+namespace stops the driver Pods before they can remove their
+`ResourceSlice`s, and nothing cleans them up automatically:
 
 ```
 NAME                                                                                NODE                      DRIVER
@@ -560,69 +488,61 @@ resourceslice.resource.k8s.io/00000-gpu.example.com-k8s-lab-default-worker-rpp7s
 resourceslice.resource.k8s.io/00000-gpu.example.com-k8s-lab-default-worker2-j7x2z   k8s-lab-default-worker2   gpu.example.com
 ```
 
-They don't come back on their own, and nothing else in the cluster
-depends on them once the driver is gone - delete them directly:
+Nothing uses them once the driver is gone. Delete them:
 
 ```
 kubectl delete resourceslices --all
 ```
 
-That's the last of this chapter's API-level material - the remaining
-two topics are tooling built on top of everything already covered,
-starting with a web UI.
+The last two topics are tools that work on top of everything covered so
+far.
 
 ## Cluster web UI: Headlamp
 
-**Why**: `kubernetes/dashboard`, the project's original web UI, was
-archived by its maintainers on January 21, 2026, citing lack of active
-maintainers - any material describing it as the current option is
-already out of date. **Headlamp** (`kubernetes-sigs/headlamp`) is the
-Kubernetes project's own recommended replacement, an official SIG UI
-sub-project: a from-scratch rewrite (React + Material UI), actively
-released, with RBAC-aware views, multi-cluster support, and a plugin
-architecture.
+**Why**: the original web UI, `kubernetes/dashboard`, was archived by
+its maintainers on January 21, 2026, for lack of maintainers. Material
+that presents it as the current option is out of date. Its recommended
+replacement is **Headlamp** (`kubernetes-sigs/headlamp`), an official
+Kubernetes SIG UI project. It's actively released, shows only what your
+RBAC permissions allow, supports multiple clusters, and can be extended
+with plugins.
 
-Two install paths, not one: in-cluster via Helm
-(`helm repo add headlamp https://kubernetes-sigs.github.io/headlamp/`,
-then `helm install`), or as a standalone desktop application that reads
-a local kubeconfig directly, with zero in-cluster deployment at all.
-The desktop app is worth considering for general workstation use - it's
-not tied to any single cluster's lifecycle the way the in-cluster
-Deployment is, so it survives a `make down` unlike anything this
-tutorial has deployed into the cluster itself.
+There are two ways to install it:
 
-Auth for the in-cluster install follows the same pattern the old
-Dashboard used: a ServiceAccount token
-(`kubectl create token <name>`), which is chapter 9's RBAC and
-ServiceAccount material directly, not a new mechanism this chapter
-introduces. One thing worth checking before installing rather than
-after: the current Helm chart provisions a `cluster-admin`
-ClusterRoleBinding by default for its own ServiceAccount - fine for this
-lab, but exactly the kind of over-broad grant chapter 9's RBAC section
-already covered how to narrow (a `Role`/`RoleBinding` scoped to specific
-namespaces and verbs instead of the default `ClusterRoleBinding`).
+- **In the cluster, with Helm**: `helm repo add headlamp
+  https://kubernetes-sigs.github.io/headlamp/`, then `helm install`.
+- **As a desktop application** that reads your local kubeconfig, with
+  nothing installed in the cluster. It isn't tied to one cluster, so it
+  survives a `make down`. For everyday use on a workstation, it's the
+  simpler choice.
 
-From a cluster web UI, this closing topic moves to the opposite end of
-the tooling spectrum - extending `kubectl` itself on the command line.
+The in-cluster version logs you in with a ServiceAccount token
+(`kubectl create token <name>`), the ServiceAccount and RBAC material
+from chapter 9. Check one thing before installing: by default the Helm
+chart binds its own ServiceAccount to `cluster-admin`. That's fine for
+this lab, but on a real cluster you'd narrow it with a `Role` and
+`RoleBinding` limited to specific namespaces and verbs, as chapter 9
+shows.
+
+From a web UI to the other end of the scale: adding commands to
+`kubectl`.
 
 ## krew: a kubectl plugin manager
 
-Installed via the official one-liner from `kubernetes-sigs/krew`
-releases (an install method that's stayed unchanged for years); once
-installed, `kubectl krew search <term>` and `kubectl krew install
-<plugin>` pull plugins that then run as `kubectl <plugin-name>`. The one
-plugin worth naming directly is `neat`
-(`kubectl get <resource> -o yaml | kubectl neat`), which strips
-`creationTimestamp`/`resourceVersion`/`uid`/`status`/empty-placeholder
-noise from live object YAML - genuinely useful against this repo's own
-scratch-manifest workflow, where a `kubectl get -o yaml` dump is often
-the fastest way to capture a real object's shape as a starting point for
-a new example file. `kubectl`'s own verb grammar isn't fully consistent
-- resource-generic verbs (`get`, `describe`, `delete`) require a
-resource-type argument since they can target anything, while
-Pod-specific verbs (`logs`, `exec`, `attach`, `debug`, `cp`,
-`port-forward`) skip it since there's no ambiguity - longstanding,
-organic inconsistency in the CLI, not something to second-guess. It's
-part of why the plugin ecosystem `krew` manages exists at all: a way to
-add commands with their own grammar without waiting for `kubectl`
-itself to grow them.
+krew installs and manages `kubectl` plugins. Install it with the
+one-line installer from the `kubernetes-sigs/krew` releases. Then
+`kubectl krew search <term>` finds plugins, `kubectl krew install
+<plugin>` installs one, and it runs as `kubectl <plugin-name>`.
+
+One plugin worth knowing is `neat`: `kubectl get <resource> -o yaml |
+kubectl neat` strips the noise from a live object's YAML
+(`creationTimestamp`, `resourceVersion`, `uid`, `status` and empty
+fields). That's handy for using a real object as the starting point for
+a new example file.
+
+Plugins also explain some of `kubectl`'s uneven command style. Generic
+verbs such as `get`, `describe` and `delete` take a resource type,
+because they work on anything. Pod-only verbs such as `logs`, `exec`,
+`attach`, `debug`, `cp` and `port-forward` don't, because the target is
+always a Pod. Plugins let people add commands, with their own style,
+without waiting for `kubectl` to grow them.

@@ -1,35 +1,29 @@
 # 13. From source code to a running workload
 
-Chapters 1-12 all start from the same place: a manifest or an image
-already exists, and the question is how the cluster behaves once it's
-there. This chapter covers the seam before that - the part every prior
-chapter quietly assumed was already handled: taking your own application
-source code and getting it into something a Deployment can actually run.
-That's a structurally different journey than "given a running cluster,
-how does object X behave," which is why it gets its own chapter instead
-of being folded into workloads, configuration, or networking - even
-though by the end it leans directly on all three (chapters 3, 4, and 5).
+Chapters 1-12 all started with an image that already existed, such as
+`nginx:1.27`, and looked at how the cluster runs it. This chapter covers
+the step before that: taking your own source code and turning it into
+something a Deployment can run. It gets its own chapter because it's a
+different kind of task, although by the end it uses Deployments
+(chapter 3), ConfigMaps (chapter 4) and Services and Ingress (chapter 5)
+together.
 
-The worked example: a minimal Python HTTP service
-(`tutorial/examples/app-deployment/app/`), built into a container image,
-pushed to a registry the cluster can actually reach, deployed with a
-Deployment + Service + Ingress + ConfigMap, and updated with a real
-rolling update triggered by a real source code change. This is
-deliberately **not** a survey of container-build best practices -
-multi-stage builds, distroless base images, layer-caching strategy - that
-belongs to a different skill than "get code running on this cluster,"
-which is all this chapter covers.
+The example is a small Python web service
+(`tutorial/examples/app-deployment/app/`). We build it into a container
+image, push the image to a registry the cluster can reach, deploy it,
+and then change the source code and roll out the new version. This is
+not a guide to building good container images (multi-stage builds,
+minimal base images, layer caching); that's a separate skill.
 
 ### The app and its Dockerfile
 
-**Why**: the running example needs to be small enough that the Dockerfile
-and the build/push/deploy mechanics stay the focus, not the app itself.
-A single-file Python HTTP service using only the standard library
-(`http.server`) means no dependency layer, no package manager, nothing to
-debug except the one thing this chapter is actually about.
+**Why**: the app should be small enough that the build and deploy
+steps stay the focus. It's a single Python file that uses only the
+standard library (`http.server`), so there are no dependencies to
+install.
 
-**Example**: `tutorial/examples/app-deployment/app/app.py`, as first
-written:
+**Example**: [`app.py`](examples/app-deployment/app/app.py), the
+version you start with. You'll change it twice in this chapter:
 
 ```python
 import http.server
@@ -52,11 +46,11 @@ if __name__ == "__main__":
     http.server.HTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
 ```
 
-`GREETING` comes from an environment variable (chapter 4's ConfigMap
-mechanism feeds it later in this chapter); `CODE_VERSION` is a plain
-constant in the source - deliberately, so a real code change later means
-editing this file, not just changing an env var.
-`tutorial/examples/app-deployment/app/Dockerfile`:
+`GREETING` comes from an environment variable, which a ConfigMap will
+set later in this chapter. `CODE_VERSION` is written into the source on
+purpose, so that changing it later means a real code change and a new
+image, not just a different setting. The
+[`Dockerfile`](examples/app-deployment/app/Dockerfile):
 
 ```dockerfile
 FROM python:3.13-slim
@@ -65,15 +59,19 @@ EXPOSE 8080
 CMD ["python3", "/app.py"]
 ```
 
+Build it and try it with Docker. Like every command in this tutorial,
+this runs from the repo root; the last argument of `docker build` is the
+directory that holds the Dockerfile:
+
 ```
-docker build -t app-deployment-demo:v1 .
+docker build -t app-deployment-demo:v1 tutorial/examples/app-deployment/app
 docker run --rm -d --name app-deployment-demo-smoketest -p 18080:8080 -e GREETING=hi app-deployment-demo:v1
 curl -sS localhost:18080
 docker rm -f app-deployment-demo-smoketest
 ```
 
-**Expected output**: a plain-text response with the env var substituted
-in, proving the image works before anything touches Kubernetes:
+**Expected output**: the response includes the `GREETING` value passed
+with `-e`. The image works before Kubernetes is involved:
 
 ```
 Successfully tagged app-deployment-demo:v1
@@ -83,37 +81,34 @@ hi from app-deployment-demo v1
 
 ### Getting a locally-built image into kind: a real registry, not `kind load docker-image`
 
-**Why**: kind clusters run as Docker containers with their own
-containerd, isolated from the Docker host's own image store - `docker
-build` on the host doesn't make an image visible to a node's kubelet by
-itself, and a kind cluster can't reach `localhost:<port>` on the host the
-way a normal remote cluster reaches a registry (`localhost` inside a node
-container means that container's own loopback, not the Docker host's -
-the same distinction chapter 5 covers for NodePort). kind ships a
-built-in shortcut for this, `kind load docker-image`, which imports an
-image directly into every node's containerd content store with no
-registry involved at all. It's genuinely useful for quick iteration, but
-it has a real limitation worth knowing up front rather than discovering
-later: it's a one-time content-store injection, not something a running
-cluster can re-check or re-pull from, which breaks `imagePullPolicy:
-Always` outright - shown below - and doesn't reflect how any real
-non-kind cluster gets images at all. **A local registry container is the
-version-current, closer-to-real-workflow answer**, and it's what kind's
-own docs recommend: `lab-helpers/registry` runs a real `registry:3`
-container on the `kind` Docker network, with containerd on every node
-configured (via each profile's `cluster.yaml`) to redirect
-`localhost:5001/<image>` pulls to it - see `lab-helpers/registry/README.md`
-and DESIGN.md's "Local registry: containerd config_path patch" for the
-full mechanics, including a real surprise hit while verifying this: kind's
-own example script claims its containerd config patch is unnecessary on
-node images from kind v0.27.0+, which turned out **not** to be true for
-this repo's pinned `kindest/node:v1.36.1` - checked directly with `docker
-exec <node> cat /etc/containerd/config.toml` rather than trusting the
-comment.
+**Why**: an image you build with `docker build` lives in your host's
+Docker image store. A kind node is a Docker container with its own
+containerd and its own image store, so it can't see that image. Nor can
+it reach a registry at `localhost:<port>` on your host: inside a node
+container, `localhost` means the container itself, not the host (the
+same distinction chapter 5 makes for NodePort).
 
-**Example**: bring the registry up once (profile-independent, like
-`lab-helpers/nfs-server`), wire up whichever profile you're using, then
-build/tag/push exactly as you would against any real registry:
+kind has a shortcut, `kind load docker-image`, which copies an image
+straight into every node's containerd, with no registry involved. It's
+handy for quick experiments, but the image then has no registry behind
+it, so the node can never re-check or re-pull it. That breaks
+`imagePullPolicy: Always`, as the next section shows, and it isn't how
+any real cluster gets images.
+
+The better approach, and the one kind's documentation recommends, is a
+local registry. `lab-helpers/registry` runs a `registry:3` container on
+the `kind` Docker network, and each profile's `cluster.yaml` configures
+containerd on every node to send pulls for `localhost:5001/<image>` to
+that container. `lab-helpers/registry/README.md` and DESIGN.md's "Local
+registry: containerd config_path patch" explain the details. One of
+them surprised us: kind's example script says its containerd config
+patch isn't needed on node images from kind v0.27.0 onwards, but it was
+needed on this repo's `kindest/node:v1.36.1`, as `docker exec <node> cat
+/etc/containerd/config.toml` showed.
+
+**Example**: start the registry (once; it doesn't belong to any
+profile, like `lab-helpers/nfs-server`), configure the profile you're
+using, then tag and push the image as you would to any registry:
 
 ```
 make registry-up
@@ -122,8 +117,8 @@ docker tag app-deployment-demo:v1 localhost:5001/app-deployment-demo:v1
 docker push localhost:5001/app-deployment-demo:v1
 ```
 
-**Expected output**: a normal registry push - no kind-specific tooling
-involved at this point, which is the point:
+**Expected output**: an ordinary registry push, with nothing
+kind-specific about it:
 
 ```
 k8s-lab-registry started - run 'make registry-client-install PROFILE=x' before pulling from it on that profile
@@ -136,7 +131,7 @@ The push refers to repository [localhost:5001/app-deployment-demo]
 v1: digest: sha256:e6d5b562d2fa242d98e1fff13d484fbc3d19aa9831389f5bc8ab6fa14e96db93 size: 1366
 ```
 
-Confirm a Pod can actually pull it - not just that the push succeeded:
+Check that a Pod can pull it, not just that the push worked:
 
 ```
 kubectl run registry-smoketest --image=localhost:5001/app-deployment-demo:v1 --restart=Never --port=8080 -- python3 /app.py
@@ -148,25 +143,24 @@ NAME                 READY   STATUS    RESTARTS   AGE   IP           NODE
 registry-smoketest   1/1     Running   0          8s    10.244.2.4   k8s-lab-default-worker2
 ```
 
-A real pull, end to end, through the registry container over the `kind`
-Docker network - not a `kind load` shortcut standing in for one.
+The node pulled the image from the registry container over the `kind`
+Docker network, just as a real cluster pulls from a real registry.
 
 ### imagePullPolicy: two ways it silently breaks
 
-**Why**: `imagePullPolicy` decides whether kubelet trusts an
-already-cached local image or re-checks the registry, and getting this
-wrong fails in two opposite, both-silent-until-you-look-closely ways
-depending on which policy you picked and where the image actually came
-from. This matters far more for a locally-built/tagged image than a
-public one, because a public image's tag (`nginx:1.27`) is conventionally
-immutable - nobody re-pushes different content under an existing public
-tag - while a locally-built image under active development gets rebuilt
-under the *same* tag constantly, by design, during iteration.
+**Why**: `imagePullPolicy` decides whether the kubelet uses an image
+that's already on the node or checks the registry first. Getting it
+wrong fails in one of two opposite ways, and neither is obvious until
+you look closely.
 
-**Example 1 - `Always` against an image that was never actually pushed
-anywhere**: `kind load docker-image` (previous section's "shortcut," not
-the registry) puts bits on the node without a registry backing the
-reference at all:
+This matters more for images you build yourself than for public ones.
+Nobody pushes different content under an existing public tag such as
+`nginx:1.27`, but while you're developing, you may rebuild your own
+image under the same tag many times.
+
+**Example 1: `Always` with an image that was never pushed anywhere.**
+`kind load docker-image` (the shortcut from the previous section) puts
+the image on the node, with no registry behind it:
 
 ```
 kind load docker-image app-deployment-demo:v1 --name k8s-lab-default
@@ -174,10 +168,10 @@ kubectl run pullpolicy-always-demo --image=app-deployment-demo:v1 --image-pull-p
 kubectl describe pod pullpolicy-always-demo
 ```
 
-**Expected output**: `Always` doesn't fall back to the already-present
-local copy when its registry check fails - and an unqualified image name
-defaults to `docker.io/library/<name>`, a registry that has no idea this
-image exists:
+**Expected output**: the pull fails. An image name without a registry
+defaults to `docker.io/library/<name>`, and Docker Hub has never heard
+of this image. `Always` doesn't fall back to the copy on the node when
+the registry check fails:
 
 ```
 Normal   Pulling    4s    kubelet   Pulling image "app-deployment-demo:v1"
@@ -190,18 +184,16 @@ Normal   BackOff    1s    kubelet   Back-off pulling image "app-deployment-demo:
 Warning  Failed     1s    kubelet   Error: ImagePullBackOff
 ```
 
-The image is sitting right there in the node's containerd content store -
-`kind load` put it there seconds earlier - and `Always` fails anyway,
-because it never even checks the local cache once it decides a pull is
-required. This is the concrete case for the registry approach above: a
-`localhost:5001/...`-qualified image has somewhere real to answer that
-check.
+The image is on the node, because `kind load` put it there seconds
+earlier, and the Pod fails anyway: with `Always`, the kubelet must reach
+the registry first. That's the case for the local registry: a name like
+`localhost:5001/...` has a registry that can answer.
 
-**Example 2 - `IfNotPresent` silently serving stale code after a
-same-tag rebuild**: pin a Pod to one node, let it pull the registry-backed
-image normally, then rebuild the image with different content but push
-it under the exact same tag - a common real mistake during iteration,
-forgetting to bump the tag:
+**Example 2: `IfNotPresent` serving old code after a rebuild under the
+same tag.** Pin a Pod to one node and let it pull the image from the
+registry. Then rebuild the image with different content and push it
+under the *same* tag. Forgetting to change the tag is a common mistake
+during development:
 
 ```
 kubectl run pullpolicy-ifnotpresent-demo --image=localhost:5001/app-deployment-demo:v1 --image-pull-policy=IfNotPresent --restart=Never --overrides='{"spec":{"nodeName":"k8s-lab-default-worker"}}' -- python3 /app.py
@@ -212,12 +204,23 @@ Normal  Pulling  5s  kubelet  Pulling image "localhost:5001/app-deployment-demo:
 Normal  Pulled   3s  kubelet  Successfully pulled image "localhost:5001/app-deployment-demo:v1" in 2.225s
 ```
 
-Now edit `app.py` to add `(updated!)` to the response text, rebuild,
-retag as the same `v1`, and push again - a genuinely different image
-digest under an unchanged tag:
+If `registry-smoketest` from the previous section ran on
+`k8s-lab-default-worker` too, that node already has the image, and you'll
+see `already present on machine` here instead of a pull. Either way, the
+node now has `v1`.
+
+Now edit `app.py` so the response ends with `(updated!)`: change the
+`body = ...` line to
+
+```python
+        body = f"{GREETING} from app-deployment-demo {CODE_VERSION} (updated!)\n"
+```
+
+Then rebuild, tag it `v1` again and push. The registry now has a
+different image (a new digest) under the same tag:
 
 ```
-docker build -t app-deployment-demo:v1 .
+docker build -t app-deployment-demo:v1 tutorial/examples/app-deployment/app
 docker tag app-deployment-demo:v1 localhost:5001/app-deployment-demo:v1
 docker push localhost:5001/app-deployment-demo:v1
 ```
@@ -226,7 +229,7 @@ docker push localhost:5001/app-deployment-demo:v1
 v1: digest: sha256:1870d79c0ba5e9f3e8e14eda98fde847ec641358bed3a7767f17e1c13453881e size: 1366
 ```
 
-Delete and recreate the same demo Pod, pinned to the same node, still
+Delete the Pod and create it again, on the same node, still with
 `IfNotPresent`:
 
 ```
@@ -235,9 +238,9 @@ kubectl run pullpolicy-ifnotpresent-demo --image=localhost:5001/app-deployment-d
 kubectl describe pod pullpolicy-ifnotpresent-demo
 ```
 
-**Expected output**: no pull attempted at all, and the Pod serves the
-**old** content, silently - the registry has genuinely different bits
-under `v1` now, and this node will never notice:
+**Expected output**: the kubelet doesn't pull anything, and the Pod
+serves the **old** code. The registry has new content under `v1`, but
+this node never checks:
 
 ```
 Normal  Pulled   4s  kubelet  Container image "localhost:5001/app-deployment-demo:v1" already present on machine and can be accessed by the pod
@@ -248,32 +251,52 @@ $ curl -sS <pod-ip>:8080
 hello from app-deployment-demo v1
 ```
 
-No `(updated!)`. `IfNotPresent` checks whether *a* local image matches
-the reference string, not whether it matches what the registry currently
-has behind that tag - so once a node has pulled a given tag once, that
-node is done checking, forever, until the tag is deleted from its local
-cache some other way. Switching that same Deployment back to `Always`
-and rolling it (verified separately, same cluster) does pick up the new
-digest correctly on both nodes - `Always` is the fix for exactly this
-failure mode, at the cost of the registry-reachability requirement Example
-1 showed. Neither policy is "safer" in general; they fail in opposite
-directions depending on what's actually backing the image reference.
+No `(updated!)`. `IfNotPresent` only checks whether the node has *an*
+image with that name and tag, not whether it matches what the registry
+has now. Once a node has pulled a tag, it won't pull it again until the
+image is removed from the node some other way. Switching to `Always`
+fixes this (checked separately, on the same cluster): both nodes picked
+up the new digest. But `Always` needs a reachable registry, as Example 1
+showed. Neither policy is safer in general; they fail in opposite
+situations.
+
+The real fix is to give every build a new tag, which is what the
+rolling-update section below does.
+
+Before going on, undo the `(updated!)` edit and push the original `v1`
+again, so the registry holds the code the rest of the chapter expects.
+Then delete this section's demo Pods:
+
+```
+git checkout -- tutorial/examples/app-deployment/app/app.py
+docker build -t app-deployment-demo:v1 tutorial/examples/app-deployment/app
+docker tag app-deployment-demo:v1 localhost:5001/app-deployment-demo:v1
+docker push localhost:5001/app-deployment-demo:v1
+kubectl delete pod registry-smoketest pullpolicy-always-demo pullpolicy-ifnotpresent-demo
+```
+
+```
+v1: digest: sha256:e6d5b562d2fa242d98e1fff13d484fbc3d19aa9831389f5bc8ab6fa14e96db93 size: 1366
+pod "registry-smoketest" deleted from default namespace
+pod "pullpolicy-always-demo" deleted from default namespace
+pod "pullpolicy-ifnotpresent-demo" deleted from default namespace
+```
+
+(The `docker build` output is left out; `git checkout` prints nothing.)
+The digest is the same as the first `v1` push: the same source builds
+the same image.
 
 ### Deployment, Service, Ingress, ConfigMap: tying it together
 
-**Why**: none of this is new API surface - a Deployment (chapter 3), a
-ConfigMap consumed via `envFrom` (chapter 4), a ClusterIP Service and an
-Ingress routing to it (chapter 5). What's new is that the Deployment's
-`image:` field now points at something *this repo* built and pushed,
-rather than an upstream tag like `nginx:1.27`, and it uses the
-`imagePullPolicy` lesson from above deliberately: `IfNotPresent`, which
-is the right choice for a locally-built image that changes tag on every
-real build (the "same-tag rebuild" trap above is specifically about
-*not* bumping the tag - `IfNotPresent` is fine once tags are actually
-unique per build, which the rolling-update section below does properly).
+**Why**: these are objects from earlier chapters: a Deployment
+(chapter 3), a ConfigMap passed to the container with `envFrom`
+(chapter 4), and a ClusterIP Service with an Ingress in front of it
+(chapter 5). What's new is that the Deployment's `image:` is one we
+built and pushed ourselves. It uses `IfNotPresent`, which is the right
+choice once every build gets its own tag.
 
-**Example**: `tutorial/examples/app-deployment/configmap.yaml`,
-`deployment.yaml`, `service.yaml`, and `ingress.yaml`:
+**Example**: the four manifests in `tutorial/examples/app-deployment/`.
+The ConfigMap and the Deployment:
 
 ```yaml
 # configmap.yaml
@@ -314,18 +337,18 @@ spec:
             name: app-deployment-demo-config
 ```
 
-`service.yaml` is a plain ClusterIP selecting `app: app-deployment-demo`
-on port 80 -> 8080. `ingress.yaml` routes `/app-deployment-demo` to it
-(a distinct path from chapter 5's own `/` demo Ingress, so both can exist
-on the same cluster at once). Chapter 5's Ingress routed `/` itself, so
-nothing needed rewriting; here the app is mounted under a path prefix,
-which ingress-nginx (this is nginx-specific, not part of the core
-Ingress API) handles by combining a regex `path` with a
-`rewrite-target` annotation: `(/|$)(.*)` captures whatever comes after
-`/app-deployment-demo` into capture group `$2`, and
-`rewrite-target: /$2` is what's actually forwarded to the backend - so
-a request for `/app-deployment-demo/foo` reaches the app as `/foo`, the
-prefix stripped entirely before the app ever sees it:
+`service.yaml` is a plain ClusterIP Service that selects
+`app: app-deployment-demo` and maps port 80 to 8080.
+
+`ingress.yaml` routes `/app-deployment-demo` to it. That's a different
+path from chapter 5's Ingress on `/`, so both can exist on the same
+cluster. Because the app is served under a path prefix, the prefix has
+to be removed before a request reaches it. ingress-nginx does that with
+a regex `path` and its `rewrite-target` annotation (both specific to
+ingress-nginx, not part of the core Ingress API): `(/|$)(.*)` captures
+whatever follows `/app-deployment-demo` as `$2`, and
+`rewrite-target: /$2` sends just that to the app. A request for
+`/app-deployment-demo/foo` reaches the app as `/foo`:
 
 ```yaml
 # ingress.yaml
@@ -359,9 +382,9 @@ kubectl get pods -l app=app-deployment-demo -o wide
 curl -sS localhost/app-deployment-demo/
 ```
 
-**Expected output**: both replicas pull cleanly (fresh nodes, so no
-stale-cache surprise this time), land on different nodes, and the full
-path - Ingress -> Service -> ConfigMap-fed env var - works end to end:
+**Expected output**: both replicas pull the image and run, on different
+nodes, and a request through the Ingress and the Service gets the
+greeting from the ConfigMap:
 
 ```
 deployment "app-deployment-demo" successfully rolled out
@@ -373,15 +396,13 @@ app-deployment-demo-79bb5b767b-r5qqm   1/1     Running   0          12s   k8s-la
 hello from app-deployment-demo v1
 ```
 
-The very first `curl` right after `rollout status` reported success
-returned a `503` here, not the app's response - a real, reproducible
-propagation gap between the Deployment being "rolled out" and
-ingress-nginx's own endpoint list catching up, the same class of lag
-chapter 5 touches on. A retry a few seconds later succeeded. Worth
-expecting, not worth chasing as a bug.
+If the first `curl` returns `503`, wait a few seconds and try again.
+That happened here: `rollout status` had reported success, but
+ingress-nginx hadn't yet picked up the new Pods. The delay is normal
+(chapter 5 mentions the same kind of lag), not a bug.
 
-Confirm the ConfigMap actually reached the container, rather than
-assuming `envFrom` worked because nothing errored:
+Check that the ConfigMap's value reached the container; `envFrom`
+doesn't report an error if it doesn't:
 
 ```
 $ kubectl exec deploy/app-deployment-demo -- env | grep GREETING
@@ -390,17 +411,17 @@ GREETING=hello
 
 ### Rolling update: from a source change to a running rollout
 
-**Why**: this is chapter 3's rolling-update mechanism, but started from
-the actual place a rollout starts in practice - editing source, not
-typing a new tag into a manifest. The Deployment's `image:` field
-staying at `:v1` in the checked-in YAML above is deliberate, matching
-this tutorial's existing convention (chapter 3's `deployment.yaml` never
-gets edited either): the update happens via `kubectl set image` against
-a newly-built, newly-tagged image, not by re-applying a hand-edited
-manifest.
+**Why**: this is chapter 3's rolling update, started the way it starts
+in practice: by changing source code. As in chapter 3, the checked-in
+`deployment.yaml` stays at `:v1`. The update is made with `kubectl set
+image`, pointing the Deployment at a newly built image with a new
+tag.
 
-**Example**: a real code change - not just a version bump, an actual new
-line of behavior (the response now includes the serving Pod's hostname):
+**Example**: change the code, not just the version string. Edit
+`app.py` as below, so the response also includes the hostname of the
+Pod that served it. If the edit goes wrong,
+[`reference/app-v2.py`](examples/app-deployment/reference/app-v2.py) is
+the finished v2; copy it over `app/app.py`.
 
 ```diff
 --- app.py (v1)
@@ -424,12 +445,12 @@ line of behavior (the response now includes the serving Pod's hostname):
          self.wfile.write(body.encode())
 ```
 
-Build, tag, and push under a genuinely new tag this time - the fix for
-the same-tag trap two sections back - then trigger the rollout the same
-way chapter 3 does, annotating the change-cause first:
+Build, tag and push under a new tag, `v2`, which avoids the same-tag
+problem from earlier. Then record a change cause and start the rollout,
+as in chapter 3:
 
 ```
-docker build -t app-deployment-demo:v2 .
+docker build -t app-deployment-demo:v2 tutorial/examples/app-deployment/app
 docker tag app-deployment-demo:v2 localhost:5001/app-deployment-demo:v2
 docker push localhost:5001/app-deployment-demo:v2
 kubectl annotate deployment app-deployment-demo kubernetes.io/change-cause="bump app image to v2 (adds pod hostname to response)" --overwrite
@@ -439,10 +460,9 @@ kubectl get rs -l app=app-deployment-demo
 kubectl rollout history deployment/app-deployment-demo
 ```
 
-**Expected output**: a real rolling update, one pod at a time, the old
-ReplicaSet scaled to zero and kept around rather than deleted - all
-identical in shape to chapter 3's nginx-version-bump example, just
-triggered by an actual code change and a freshly-pushed image this time:
+**Expected output**: the same rolling update as chapter 3's nginx
+example. Pods are replaced one at a time, and the old ReplicaSet is
+scaled to zero and kept:
 
 ```
 v2: digest: sha256:245ce0c5f4f59a9208f5851fbb406c6c849649d7dc8c078b63faf72b4db16cc7 size: 1366
@@ -458,10 +478,9 @@ REVISION  CHANGE-CAUSE
 2         bump app image to v2 (adds pod hostname to response)
 ```
 
-Same "both revisions show the same change-cause text" quirk chapter 3
-already flagged (the annotation lands on whichever ReplicaSet is current
-at the moment it runs, not tied to a specific future revision) - not a
-new surprise, just the same one showing up again in a different example.
+Both revisions show the same change cause. Chapter 3 explains why: the
+annotation is copied to whichever ReplicaSet is current when you set
+it.
 
 ```
 $ curl -sS localhost/app-deployment-demo/
@@ -470,10 +489,8 @@ $ curl -sS localhost/app-deployment-demo/
 hello from app-deployment-demo v2, served by app-deployment-demo-6658747867-cmj6w
 ```
 
-Both replicas answering, both on the new code, both identifiable by
-hostname - a source change, through a real build and push, landing on a
-running cluster by the same rollout mechanism chapter 3 introduced with
-a plain `nginx` version bump. The registry now holds both tags:
+Both replicas answer, both run the new code, and each reports its own
+hostname. The registry now has both tags:
 
 ```
 $ curl -sS localhost:5001/v2/app-deployment-demo/tags/list
@@ -482,18 +499,12 @@ $ curl -sS localhost:5001/v2/app-deployment-demo/tags/list
 
 ### Teardown
 
-**Why**: unlike most of this tutorial's examples, this chapter leaves
-two different kinds of real state behind - Kubernetes objects on the
-cluster, and a Docker container (`k8s-lab-registry`) running on the
-host, independent of any cluster. The registry isn't optional lab
-scaffolding the way `lab-helpers/nfs-server` is for chapter 4 - it's a
-step in the actual deployment workflow this chapter walked through
-(build -> push -> deploy), which is exactly why it needs its own
-explicit teardown rather than disappearing along with a `kind delete
-cluster`.
+**Why**: this chapter leaves two kinds of state behind: Kubernetes
+objects in the cluster, and the `k8s-lab-registry` container on your
+host, which doesn't belong to any cluster. Deleting the cluster doesn't
+remove the registry, so it needs its own step.
 
-**Example**: delete the app's Kubernetes objects first, then stop the
-registry container:
+**Example**: delete the app's objects, then stop the registry:
 
 ```
 kubectl delete -f tutorial/examples/app-deployment/ingress.yaml
@@ -505,10 +516,10 @@ make registry-down
 docker ps -a --filter name=k8s-lab-registry
 ```
 
-**Expected output**: every object this chapter created is gone from the
-cluster, and the registry container is stopped and removed (its
-`lab-helpers/registry/data/` bind mount is left in place, so `v1` and
-`v2` are still there on the next `make registry-up`):
+**Expected output**: the objects are gone, and the registry container
+is stopped and removed. Its data directory, `lab-helpers/registry/data/`,
+is kept, so `v1` and `v2` are still there after the next
+`make registry-up`:
 
 ```
 ingress.networking.k8s.io "app-deployment-demo" deleted from default namespace
@@ -523,8 +534,13 @@ k8s-lab-registry removed (lab-helpers/registry/data left in place)
 CONTAINER ID   IMAGE     COMMAND   CREATED   STATUS    PORTS     NAMES
 ```
 
-`make down PROFILE=default` (or whichever profile was used) still
-removes the cluster itself as usual - that part isn't different from any
-other chapter. What's different here is that stopping there would leave
-`k8s-lab-registry` running on the host indefinitely, since it was never
-tied to the cluster's own lifecycle in the first place.
+`make down PROFILE=default` (or your profile) deletes the cluster as
+usual. Without `make registry-down`, the registry would keep running on
+your host.
+
+Your `app.py` still has the v2 change. To run the chapter again from the
+start, put back the v1 version:
+
+```
+git checkout -- tutorial/examples/app-deployment/app/app.py
+```
