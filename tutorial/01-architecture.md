@@ -25,6 +25,19 @@ finished, check that the cluster responds:
 make status
 ```
 
+**Expected output**: the three nodes, `Ready`, followed by a list of
+every Pod in the cluster, all `Running` once they've started. The
+nodes (with your machine's kernel version where this shows
+`<host kernel>`):
+
+```
+--- profile: default (context kind-k8s-lab-default) ---
+NAME                            STATUS   ROLES           AGE   VERSION   INTERNAL-IP   EXTERNAL-IP   OS-IMAGE                       KERNEL-VERSION           CONTAINER-RUNTIME
+k8s-lab-default-control-plane   Ready    control-plane   39m   v1.36.1   172.18.0.4    <none>        Debian GNU/Linux 13 (trixie)   <host kernel> (amd64)   containerd://2.3.1
+k8s-lab-default-worker          Ready    <none>          39m   v1.36.1   172.18.0.2    <none>        Debian GNU/Linux 13 (trixie)   <host kernel> (amd64)   containerd://2.3.1
+k8s-lab-default-worker2         Ready    <none>          39m   v1.36.1   172.18.0.3    <none>        Debian GNU/Linux 13 (trixie)   <host kernel> (amd64)   containerd://2.3.1
+```
+
 Commands in this chapter that use `docker exec` need one of those
 container names. On another profile, `docker ps --format '{{.Names}}'`
 lists them.
@@ -75,7 +88,16 @@ A worker node runs two components:
 Every node also runs a **container runtime**, which actually starts and
 stops containers (containerd, in kind), and a **CNI** (Container
 Network Interface) plugin, which sets up each Pod's network (chapter
-5).
+5). The `CONTAINER-RUNTIME` column above shows containerd's version;
+you can also ask containerd itself, inside a node container:
+
+```
+docker exec k8s-lab-default-worker containerd --version
+```
+
+```
+containerd github.com/containerd/containerd/v2 v2.3.1 64b425cf570b3b8dd1d4cc46da7c1fce65c6651a
+```
 
 ### Static pods: how the control plane bootstraps itself
 
@@ -124,9 +146,11 @@ any other container.
 **Example**: compare Kubernetes's view of the nodes with Docker's:
 
 ```
-kubectl get nodes -o wide
-docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Ports}}'
+kubectl get nodes
+docker ps --filter name=k8s-lab-default --format 'table {{.Names}}\t{{.Image}}\t{{.Ports}}'
 ```
+
+(`--filter` leaves out any other containers you have running.)
 
 **Expected output**: one Docker container per node, all on one Docker
 network (`kind`). Only the control-plane container publishes ports on
@@ -134,20 +158,32 @@ your host: 80 and 443 for ingress (chapter 5), and the API server's
 port:
 
 ```
-NAME                            STATUS   ROLES           VERSION
-k8s-lab-default-control-plane   Ready    control-plane   v1.36.1
-k8s-lab-default-worker          Ready    <none>          v1.36.1
-k8s-lab-default-worker2         Ready    <none>          v1.36.1
-
-NAMES                            IMAGE                   PORTS
-k8s-lab-default-worker2          kindest/node:v1.36.1
-k8s-lab-default-control-plane    kindest/node:v1.36.1    0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp, ...
-k8s-lab-default-worker           kindest/node:v1.36.1
+NAME                            STATUS   ROLES           AGE   VERSION
+k8s-lab-default-control-plane   Ready    control-plane   40m   v1.36.1
+k8s-lab-default-worker          Ready    <none>          40m   v1.36.1
+k8s-lab-default-worker2         Ready    <none>          40m   v1.36.1
+NAMES                           IMAGE                  PORTS
+k8s-lab-default-worker2         kindest/node:v1.36.1
+k8s-lab-default-worker          kindest/node:v1.36.1
+k8s-lab-default-control-plane   kindest/node:v1.36.1   0.0.0.0:80->80/tcp, 0.0.0.0:443->443/tcp, 127.0.0.1:41419->6443/tcp
 ```
 
+`127.0.0.1:41419->6443/tcp` is the API server: port 6443 in the
+container, published on a random port on your host's loopback address.
+Your kubeconfig points `kubectl` at it.
+
 Each node container's first process, PID 1, is `systemd`, as on a real
-machine, and the kubelet runs as a systemd service under it. The
-practical consequence: in kind, a node going away and a container going
+machine, and the kubelet runs as a systemd service under it:
+
+```
+docker exec k8s-lab-default-control-plane ps -o pid,comm --no-headers -p 1
+```
+
+```
+      1 systemd
+```
+
+The practical consequence: in kind, a node going away and a container going
 away are the same thing. `docker stop <node-container>` is a real way
 to simulate a node failure (chapter 12). On a real cluster, a node is a
 whole machine.
