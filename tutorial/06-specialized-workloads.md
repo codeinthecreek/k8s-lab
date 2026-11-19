@@ -1,189 +1,196 @@
 # 6. Specialized workloads: StatefulSet, DaemonSet, Job, and CronJob
 
-This chapter is about the workloads an interchangeable replica can't
-serve: something that needs its own stable identity and storage,
-something that needs a guaranteed presence on every node, or work
-that's meant to finish rather than run forever. Chapter 3 covered the
-Pod/ReplicaSet/Deployment line, where every replica is interchangeable
-- any one of them can be killed and replaced without anyone needing to
-track which, and none of them has an identity beyond a random name
-suffix, and where the scheduler picks freely among whichever nodes have
-room rather than any Pod caring which node it lands on. This chapter
-covers four workload shapes that are deliberate exceptions to that
-model. First, StatefulSet, for workloads
-that need stable per-replica identity and storage instead of
-interchangeability - now that chapter 4's PersistentVolumeClaims and
-chapter 5's Service model are both in place, the two mechanisms
-StatefulSet actually builds on. Then DaemonSet, for workloads that need
-exactly one Pod per node rather than some replica count chosen
-independently of node count - chapter 5 already ran into one of these
-(kindnet) without covering DaemonSet as a general concept. Then Job and
-CronJob, for work that's meant to run to completion and stop rather
-than stay up - a different reconciliation target ("N successful
-completions" instead of "N running replicas"), not a new architectural
-idea.
+A Deployment (chapter 3) treats its replicas as interchangeable. Any
+one of them can be deleted and replaced, they have random name
+suffixes, and the scheduler puts them wherever there's room. That suits
+many applications, but not all. This chapter covers four workload types
+for the cases it doesn't suit:
+
+- **StatefulSet**: each replica has a stable name and its own storage.
+  It builds on PersistentVolumeClaims (chapter 4) and Services
+  (chapter 5).
+- **DaemonSet**: exactly one Pod on every node. kindnet, the network
+  plugin from chapter 5, runs this way.
+- **Job** and **CronJob**: work that runs until it's finished, then
+  stops, once or on a schedule.
 
 ### StatefulSet: stable identity and per-replica storage
 
-**Why**: a Deployment's Pods are interchangeable - any replica can be
-killed, replaced, or scaled away and nothing else needs to know which
-one, because none of them has an identity beyond a random name suffix.
-Some workloads need the opposite: predictable, stable Pod names that
-persist across restarts, Pods created and terminated in a defined
-order rather than all at once, and each replica getting its *own*
-storage rather than sharing (or having none). StatefulSet is that
-different reconciliation shape - a `spec.serviceName` naming a headless
-Service (`clusterIP: None`) gives each Pod a stable per-Pod DNS name,
-and `volumeClaimTemplates` gives each ordinal its own PVC, provisioned
-the same dynamic way chapter 4 covered, just once per replica instead
-of once total.
+**Why**: some applications, such as databases, need each replica to
+keep its identity: the same name after a restart, its own storage, and
+a fixed order for starting and stopping. A **StatefulSet** provides
+that:
 
-**Example**: `tutorial/examples/specialized-workloads/statefulset-headless-service.yaml`
-(the governing headless Service) and
-`tutorial/examples/specialized-workloads/statefulset.yaml` (2 replicas, each with
-its own `data` PVC via `volumeClaimTemplates`):
+- Pods are named `<statefulset>-0`, `<statefulset>-1` and so on, and
+  are created in that order, one at a time.
+- `spec.serviceName` names a **headless Service** (`clusterIP: None`),
+  which gives each Pod its own DNS name.
+- `volumeClaimTemplates` creates a separate PVC for each Pod, provisioned
+  as in chapter 4.
+
+**Example**: [`statefulset-headless-service.yaml`](examples/specialized-workloads/statefulset-headless-service.yaml)
+is the headless Service, and
+[`statefulset.yaml`](examples/specialized-workloads/statefulset.yaml) a
+StatefulSet with 2 replicas, each with its own PVC called `data`:
 
 ```
 kubectl apply -f tutorial/examples/specialized-workloads/statefulset-headless-service.yaml
 kubectl apply -f tutorial/examples/specialized-workloads/statefulset.yaml
+```
+
+```
+service/specialized-workloads-demo-sts created
+statefulset.apps/specialized-workloads-demo-sts created
+```
+
+After 20 seconds or so, list the Pods and their PVCs:
+
+```
 kubectl get pods -l app=specialized-workloads-demo-sts -o wide
 kubectl get pvc -l app=specialized-workloads-demo-sts
-kubectl run specialized-workloads-demo-dnscheck --image=busybox:1.36 --restart=Never -i --rm --command -- \
-  nslookup specialized-workloads-demo-sts-0.specialized-workloads-demo-sts.default.svc.cluster.local
 ```
 
-**Expected output**: predictable ordinal Pod names (not random suffixes
-like a ReplicaSet's), created one at a time in order - `-1` doesn't even
-start `ContainerCreating` until `-0` is `1/1 Running` - and one PVC per
-ordinal:
+**Expected output**: Pods named `-0` and `-1`, not random suffixes.
+`-1` is younger: it was only created once `-0` was running. Each has
+its own PVC:
 
 ```
-$ kubectl get pods -l app=specialized-workloads-demo-sts -o wide
-NAME                   READY   STATUS    RESTARTS   AGE    IP           NODE
-specialized-workloads-demo-sts-0   1/1     Running   0          109s   10.244.1.5   k8s-lab-default-worker2
-specialized-workloads-demo-sts-1   1/1     Running   0          55s    10.244.2.4   k8s-lab-default-worker
-
-$ kubectl get pvc -l app=specialized-workloads-demo-sts
-NAME                        STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS
-data-specialized-workloads-demo-sts-0   Bound    pvc-9805175e-a63f-430f-b2bc-20d8a92f5fdf   100Mi      RWO            standard
-data-specialized-workloads-demo-sts-1   Bound    pvc-473c729b-a436-4e4b-ba98-c6ee98ec90a6   100Mi      RWO            standard
+NAME                               READY   STATUS    RESTARTS   AGE   IP            NODE                      NOMINATED NODE   READINESS GATES
+specialized-workloads-demo-sts-0   1/1     Running   0          20s   10.244.1.24   k8s-lab-default-worker2   <none>           <none>
+specialized-workloads-demo-sts-1   1/1     Running   0          11s   10.244.2.46   k8s-lab-default-worker    <none>           <none>
+NAME                                    STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE
+data-specialized-workloads-demo-sts-0   Bound    pvc-4a285c9f-6fa9-4b30-bb9a-56fbd8a154e4   100Mi      RWO            standard       <unset>                 20s
+data-specialized-workloads-demo-sts-1   Bound    pvc-8f9ad37e-77d5-479c-ba65-f1a8b03c7cad   100Mi      RWO            standard       <unset>                 12s
 ```
 
-The fully-qualified name resolves straight to that specific Pod's IP,
-not a load-balanced VIP (virtual IP) - the point that actually matters for "why
-StatefulSet": each ordinal gets its own durable address, not a shared
-one:
+Each Pod's DNS name resolves to that Pod's own IP address. A ClusterIP
+Service's name resolves to one shared address that spreads requests
+over all its Pods (chapter 5); here, each replica can be reached
+individually, at a name that doesn't change.
+
+To look the name up, start a busybox Pod that just sleeps, as a client
+inside the cluster:
 
 ```
-$ kubectl run specialized-workloads-demo-dnscheck --image=busybox:1.36 --restart=Never -i --rm --command -- \
-  nslookup specialized-workloads-demo-sts-0.specialized-workloads-demo-sts.default.svc.cluster.local
+kubectl run specialized-workloads-demo-client --image=busybox:1.36 --command -- sleep 3600
+```
+
+When it's running, run `nslookup` in it:
+
+```
+kubectl exec specialized-workloads-demo-client -- nslookup specialized-workloads-demo-sts-0.specialized-workloads-demo-sts.default.svc.cluster.local
+```
+
+**Expected output**:
+
+```
+Server:		10.96.0.10
+Address:	10.96.0.10:53
+
+
 Name:	specialized-workloads-demo-sts-0.specialized-workloads-demo-sts.default.svc.cluster.local
-Address: 10.244.1.5
+Address: 10.244.1.24
 ```
 
-`10.244.1.5` is exactly `specialized-workloads-demo-sts-0`'s own Pod IP from the
-`get pods -o wide` output above - confirming the headless Service's
-per-Pod DNS records point at individual Pods, not a shared Service VIP
-the way chapter 5's ClusterIP Services do.
+`10.244.1.24` is the IP of `specialized-workloads-demo-sts-0` in the
+`get pods -o wide` output above. Delete the client Pod:
+
+```
+kubectl delete pod specialized-workloads-demo-client
+```
 
 ### PersistentVolumeClaims outlive their StatefulSet Pods
 
-**Why**: the whole point of per-replica storage is that a Pod's data
-survives that specific Pod being replaced - so deleting or scaling down
-a StatefulSet must not simply delete its PVCs along with the Pods, or
-the storage would be exactly as ephemeral as `emptyDir` (chapter 4) and
-the feature would be pointless. Scaling a StatefulSet down terminates
-Pods in strict reverse-ordinal order (highest number first, the mirror
-of the ordered creation above), but the freed PVC stays bound and
-intact - scaling back up reattaches the *same* volume to the
-recreated Pod of that ordinal, not a fresh empty one.
+**Why**: per-replica storage is only useful if the data survives the Pod
+being replaced. So when a StatefulSet's Pods are deleted, their PVCs
+stay. Scaling down removes Pods from the highest number down, the
+reverse of creation, and leaves their PVCs bound. Scaling back up gives
+each recreated Pod the PVC it had before, data included.
 
-**Example**: write a marker file to the highest-ordinal Pod, scale
-down to remove it, scale back up, and check whether the marker
-survived:
+**Example**: write a file in the Pod with the highest number, then
+scale down so that Pod is removed:
 
 ```
 kubectl exec specialized-workloads-demo-sts-1 -- sh -c "echo 'from ordinal 1' > /usr/share/nginx/html/marker.txt"
 kubectl scale statefulset specialized-workloads-demo-sts --replicas=1
+```
+
+```
+statefulset.apps/specialized-workloads-demo-sts scaled
+```
+
+A few seconds later, look at the Pods and the PVCs:
+
+```
+kubectl get pods -l app=specialized-workloads-demo-sts
 kubectl get pvc -l app=specialized-workloads-demo-sts
+```
+
+**Expected output**: scaling down removed only `-1`; `-0` wasn't
+touched. `-1`'s PVC is still `Bound`:
+
+```
+NAME                               READY   STATUS    RESTARTS   AGE
+specialized-workloads-demo-sts-0   1/1     Running   0          70s
+NAME                                    STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS   VOLUMEATTRIBUTESCLASS   AGE
+data-specialized-workloads-demo-sts-0   Bound    pvc-4a285c9f-6fa9-4b30-bb9a-56fbd8a154e4   100Mi      RWO            standard       <unset>                 70s
+data-specialized-workloads-demo-sts-1   Bound    pvc-8f9ad37e-77d5-479c-ba65-f1a8b03c7cad   100Mi      RWO            standard       <unset>                 62s
+```
+
+Scale back to 2. `specialized-workloads-demo-sts-1` is recreated with
+the same PVC, so once it's running, the file is still there:
+
+```
 kubectl scale statefulset specialized-workloads-demo-sts --replicas=2
 kubectl exec specialized-workloads-demo-sts-1 -- cat /usr/share/nginx/html/marker.txt
 ```
 
-**Expected output**: scaling down terminates only the highest ordinal
-(`-1`), leaving `-0` completely untouched, and its PVC stays `Bound`
-rather than being deleted:
-
 ```
-$ kubectl exec specialized-workloads-demo-sts-1 -- sh -c "echo 'from ordinal 1' > /usr/share/nginx/html/marker.txt"
-
-$ kubectl scale statefulset specialized-workloads-demo-sts --replicas=1
 statefulset.apps/specialized-workloads-demo-sts scaled
-
-$ kubectl get pods -l app=specialized-workloads-demo-sts
-NAME                   READY   STATUS    RESTARTS   AGE
-specialized-workloads-demo-sts-0   1/1     Running   0          2m32s
-
-$ kubectl get pvc -l app=specialized-workloads-demo-sts
-NAME                        STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS
-data-specialized-workloads-demo-sts-0   Bound    pvc-9805175e-a63f-430f-b2bc-20d8a92f5fdf   100Mi      RWO            standard
-data-specialized-workloads-demo-sts-1   Bound    pvc-473c729b-a436-4e4b-ba98-c6ee98ec90a6   100Mi      RWO            standard
-```
-
-Scaling back to 2 recreates `specialized-workloads-demo-sts-1` and reattaches that
-same, still-`Bound` PVC - the marker file is still there, byte for
-byte, because the recreated Pod got the exact same volume back, not a
-fresh one:
-
-```
-$ kubectl scale statefulset specialized-workloads-demo-sts --replicas=2
-statefulset.apps/specialized-workloads-demo-sts scaled
-
-$ kubectl exec specialized-workloads-demo-sts-1 -- cat /usr/share/nginx/html/marker.txt
 from ordinal 1
 ```
 
-Deleting the StatefulSet itself doesn't clean up its PVCs either - they
-have to be deleted explicitly:
+(If the `exec` says the Pod isn't running yet, try again a few seconds
+later.)
+
+Deleting the StatefulSet doesn't delete its PVCs either. You delete
+them yourself, along with the headless Service:
 
 ```
 kubectl delete statefulset specialized-workloads-demo-sts
 kubectl delete pvc -l app=specialized-workloads-demo-sts
+kubectl delete -f tutorial/examples/specialized-workloads/statefulset-headless-service.yaml
 ```
 
-Both behaviors are the same underlying design choice: a StatefulSet
-controller only ever creates PVCs, never deletes them on its own, on
-the assumption that the storage is worth more than the convenience of
-automatic cleanup - the exact opposite default from a bare Pod's
-`emptyDir` (chapter 4), which vanishes the moment the Pod does.
+```
+statefulset.apps "specialized-workloads-demo-sts" deleted from default namespace
+persistentvolumeclaim "data-specialized-workloads-demo-sts-0" deleted from default namespace
+persistentvolumeclaim "data-specialized-workloads-demo-sts-1" deleted from default namespace
+service "specialized-workloads-demo-sts" deleted from default namespace
+```
+
+A StatefulSet creates PVCs but never deletes them, on the assumption
+that the data matters more than tidying up automatically. An `emptyDir`
+volume (chapter 4) is the opposite: it disappears with its Pod.
 
 ### DaemonSet: one Pod per node, not a replica count
 
-**Why**: StatefulSet changes what "one replica" means; DaemonSet changes
-how many there are, and why. Some workloads aren't about *N*
-interchangeable copies at all - they're node-level daemons that need to
-run exactly once on every node (or every node matching some criteria):
-log collectors, CNI plugins (chapter 5's kindnet is one), monitoring
-agents. A Deployment can't express that - `replicas: N` is a number you
-choose, unrelated to how many nodes exist, and the scheduler is free to
-stack several of those replicas on one node while leaving another idle.
-DaemonSet has no `replicas` field at all: its desired Pod count is
-derived from the cluster's node count, one Pod per matching node,
-growing and shrinking automatically as nodes join or leave - nobody
-edits that number by hand. Mechanically, the DaemonSet controller
-creates one Pod per matching node and pins each to its specific node
-with a generated `nodeAffinity` (`metadata.name In [that-node]`) rather
-than leaving node choice to the scheduler's normal fit-scoring - but
-that pinned Pod still goes through the scheduler like any other, so
-ordinary scheduling constraints, including taints, still apply. That
-last point matters concretely: chapter 1's control-plane taint excludes
-ordinary Pods from the control-plane node, and a DaemonSet is no
-exception unless its Pod template explicitly tolerates that taint -
-which is exactly what lets kindnet and kube-proxy run there while an
-untolerated DaemonSet would not.
+**Why**: some programs need to run once on every node: log collectors,
+monitoring agents, network plugins like kindnet. A Deployment can't
+express that. Its `replicas` is a number you choose, unrelated to how
+many nodes there are, and the scheduler may put several replicas on
+one node and none on another.
 
-**Example**: `tutorial/examples/specialized-workloads/daemonset.yaml` -
-no `replicas` field, and no toleration yet:
+A **DaemonSet** has no `replicas` field. It runs one Pod on each node,
+and adds or removes Pods as nodes join or leave the cluster. It does
+this by giving each Pod a node affinity rule for one specific node.
+The Pods still go through the scheduler, so taints still apply: the
+control-plane node's taint (chapter 1) keeps a DaemonSet's Pods off it,
+unless the Pod template tolerates the taint. That's how kindnet and
+kube-proxy run on the control-plane node.
+
+**Example**: [`daemonset.yaml`](examples/specialized-workloads/daemonset.yaml)
+has no `replicas` field, and no toleration yet:
 
 ```yaml
 apiVersion: apps/v1
@@ -213,76 +220,72 @@ kubectl get daemonset specialized-workloads-demo-ds
 kubectl get pods -l app=specialized-workloads-demo-ds -o wide
 ```
 
-**Expected output**: `DESIRED` is `2`, not the cluster's full node count
-of 3 - the control-plane node's taint excluded it automatically, without
-any `nodeSelector` naming it, and the two Pods that did get created
-landed one on each worker:
+**Expected output**: `DESIRED` is `2`, not 3. The control-plane node's
+taint kept the DaemonSet off it, and there's one Pod on each worker.
+(Here one Pod was still pulling its image.)
 
 ```
-$ kubectl get daemonset specialized-workloads-demo-ds
+daemonset.apps/specialized-workloads-demo-ds created
 NAME                            DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR   AGE
-specialized-workloads-demo-ds   2         2         2       2            2           <none>          8s
-
-$ kubectl get pods -l app=specialized-workloads-demo-ds -o wide
-NAME                                  READY   STATUS    RESTARTS   AGE   NODE
-specialized-workloads-demo-ds-72hm4   1/1     Running   0          8s    k8s-lab-default-worker2
-specialized-workloads-demo-ds-ksmpj   1/1     Running   0          8s    k8s-lab-default-worker
+specialized-workloads-demo-ds   2         2         1       2            1           <none>          8s
+NAME                                  READY   STATUS              RESTARTS   AGE   IP            NODE                      NOMINATED NODE   READINESS GATES
+specialized-workloads-demo-ds-6gd4r   0/1     ContainerCreating   0          8s    <none>        k8s-lab-default-worker2   <none>           <none>
+specialized-workloads-demo-ds-qdxq4   1/1     Running             0          8s    10.244.2.28   k8s-lab-default-worker    <none>           <none>
 ```
 
-Adding the same toleration kindnet and kube-proxy already carry (chapter
-7 covers taints and tolerations as a general Pod-placement mechanism,
-not just this DaemonSet-specific use of one) gets the third Pod onto the
-control-plane node too, and `DESIRED` updates itself to match - nobody
-told it "3" directly, it recomputed from node count plus toleration:
+Now add the toleration that kindnet and kube-proxy have (chapter 7
+covers taints and tolerations in general). `DESIRED` changes by itself,
+because the control-plane node now qualifies too:
 
 ```
 kubectl patch daemonset specialized-workloads-demo-ds --type=json \
   -p '[{"op":"add","path":"/spec/template/spec/tolerations","value":[{"key":"node-role.kubernetes.io/control-plane","operator":"Exists","effect":"NoSchedule"}]}]'
+```
+
+```
+daemonset.apps/specialized-workloads-demo-ds patched
+```
+
+Changing the Pod template also replaces the existing Pods, one node at
+a time. Each old Pod takes about 30 seconds to stop: busybox's `sleep`
+ignores the request to stop, as in chapter 4. `kubectl rollout status`
+waits until the replacement is finished:
+
+```
+kubectl rollout status daemonset/specialized-workloads-demo-ds
 kubectl get daemonset specialized-workloads-demo-ds
 kubectl get pods -l app=specialized-workloads-demo-ds -o wide
 ```
 
-**Expected output**: `DESIRED` is now `3`, and a Pod is running on the
-control-plane node - the same exception chapter 1 described for kindnet
-and kube-proxy, now reproduced directly rather than just asserted
-(patching the template also triggers a rolling replacement of the
-existing Pods one node at a time, DaemonSet's default update strategy,
-so a `kubectl get pods` run mid-rollout may briefly show a
-`Terminating`/`ContainerCreating` pair before it settles):
+**Expected output**: `DESIRED` is `3`, and there's a Pod on the
+control-plane node:
 
 ```
-$ kubectl get daemonset specialized-workloads-demo-ds
+Waiting for daemon set "specialized-workloads-demo-ds" rollout to finish: 2 out of 3 new pods have been updated...
+Waiting for daemon set "specialized-workloads-demo-ds" rollout to finish: 2 of 3 updated pods are available...
+daemon set "specialized-workloads-demo-ds" successfully rolled out
 NAME                            DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR   AGE
-specialized-workloads-demo-ds   3         3         3       3            3           <none>          113s
-
-$ kubectl get pods -l app=specialized-workloads-demo-ds -o wide
-NAME                                  READY   STATUS    RESTARTS   AGE   NODE
-specialized-workloads-demo-ds-dm6m2   1/1     Running   0          47s   k8s-lab-default-worker2
-specialized-workloads-demo-ds-rtm9p   1/1     Running   0          88s   k8s-lab-default-control-plane
-specialized-workloads-demo-ds-t9vnt   1/1     Running   0          13s   k8s-lab-default-worker
+specialized-workloads-demo-ds   3         3         3       3            3           <none>          76s
+NAME                                  READY   STATUS    RESTARTS   AGE   IP            NODE                            NOMINATED NODE   READINESS GATES
+specialized-workloads-demo-ds-gq5nl   1/1     Running   0          2s    10.244.2.29   k8s-lab-default-worker          <none>           <none>
+specialized-workloads-demo-ds-qjvq7   1/1     Running   0          34s   10.244.1.12   k8s-lab-default-worker2         <none>           <none>
+specialized-workloads-demo-ds-tlr9v   1/1     Running   0          68s   10.244.0.6    k8s-lab-default-control-plane   <none>           <none>
 ```
 
 ### DaemonSet's other update strategy: OnDelete
 
-**Why**: the rolling replacement just seen - one Terminating/
-ContainerCreating pair at a time after the toleration patch - is
-`RollingUpdate`, DaemonSet's default `updateStrategy`: a template
-change gets pushed out to existing Pods automatically. `OnDelete` is
-the other option. A template change still updates the DaemonSet object
-and still gets recorded as a new revision, but no running Pod is
-touched until something deletes it - whether that's an operator by
-hand, a node drain, or anything else that makes that specific Pod go
-away. That makes `OnDelete` the deliberate choice for a node-level
-daemon where controlling exactly *when* each node crosses over matters
-more than getting there fast - staging a rollout node by node on a
-schedule the operator picks, rather than however quickly
-`RollingUpdate`'s `maxUnavailable` would otherwise churn through every
-node.
+**Why**: the replacement you just saw is a DaemonSet's default
+`updateStrategy`, `RollingUpdate`: when the Pod template changes, the
+existing Pods are replaced automatically. The other strategy is
+`OnDelete`. The template change is still saved, as a new revision, but
+no running Pod changes until it's deleted, by you, by draining a node,
+or for any other reason. Use `OnDelete` when you want to decide when
+each node gets the new version, for example one node at a time on your
+own schedule.
 
-**Example**: reset back to the base two-Pod DaemonSet first - the
-toleration and 3-node spread from the previous example aren't needed
-here and would just make the output below harder to read - then switch
-it to `OnDelete` and change its Pod template:
+**Example**: start again from the two-Pod DaemonSet without the
+toleration, which keeps the output short. Switch it to `OnDelete`, then
+change its Pod template:
 
 ```
 kubectl delete daemonset specialized-workloads-demo-ds
@@ -294,52 +297,70 @@ kubectl patch daemonset specialized-workloads-demo-ds --type=json \
 kubectl get daemonset specialized-workloads-demo-ds
 ```
 
-**Expected output**: `UP-TO-DATE` drops to `0` even though every Pod is
-still `READY`/`AVAILABLE` - the controller knows the running Pods no
-longer match the current template, it's just not doing anything about
-that on its own under `OnDelete`:
+**Expected output**: `UP-TO-DATE` is `0`, though both Pods are
+`READY`. The DaemonSet knows its Pods don't match the new template, but
+with `OnDelete` it leaves them alone:
 
 ```
+daemonset.apps "specialized-workloads-demo-ds" deleted from default namespace
+daemonset.apps/specialized-workloads-demo-ds created
+daemonset.apps/specialized-workloads-demo-ds patched
+daemonset.apps/specialized-workloads-demo-ds patched
 NAME                            DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR   AGE
-specialized-workloads-demo-ds   2         2         2       0            2           <none>          15s
+specialized-workloads-demo-ds   2         2         2       0            2           <none>          4s
 ```
 
-Delete one Pod by hand and only that one picks up the new template:
+The deleted DaemonSet's three Pods take about 30 seconds to stop, so
+wait until `kubectl get pods -l app=specialized-workloads-demo-ds`
+lists only the two new ones:
 
 ```
-kubectl delete pod specialized-workloads-demo-ds-cj84g
+NAME                                  READY   STATUS    RESTARTS   AGE
+specialized-workloads-demo-ds-fqxt2   1/1     Running   0          45s
+specialized-workloads-demo-ds-jdrds   1/1     Running   0          45s
+```
+
+Delete one of them, using a name from your own listing (this takes
+about 30 seconds too), and only its replacement gets the new template:
+
+```
+kubectl delete pod specialized-workloads-demo-ds-fqxt2
 kubectl get daemonset specialized-workloads-demo-ds
 kubectl get pods -l app=specialized-workloads-demo-ds -o jsonpath='{range .items[*]}{.metadata.name}{": "}{.spec.containers[0].command}{"\n"}{end}'
 ```
 
-**Expected output**: one Pod on the new `sleep 7200` command, the other
-still on `sleep 3600`, `UP-TO-DATE` at `1` of `2` - a DaemonSet with two
-of its own Pods on two different revisions of the same template at the
-same time. This is the *expected* shape of an in-progress `OnDelete`
-rollout, not a stuck or broken DaemonSet: `UP-TO-DATE` catching up to
-`DESIRED` one Pod at a time, exactly as each one gets deleted, is the
-mechanism working as designed - there's no timer or background process
-that will ever finish this rollout on its own, because finishing it is
-specifically left to whoever (or whatever) deletes the remaining Pods:
+**Expected output**: one Pod runs the new `sleep 7200` command and the
+other the old `sleep 3600`, and `UP-TO-DATE` is `1`. That's what an
+`OnDelete` update looks like halfway through, not a fault. Nothing will
+finish it automatically; each remaining Pod is updated when someone
+deletes it:
 
 ```
+pod "specialized-workloads-demo-ds-fqxt2" deleted from default namespace
 NAME                            DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR   AGE
-specialized-workloads-demo-ds   2         2         2       1            2           <none>          74s
-
-specialized-workloads-demo-ds-5rd7p: ["sh","-c","sleep 7200"]
-specialized-workloads-demo-ds-l2fds: ["sh","-c","sleep 3600"]
+specialized-workloads-demo-ds   2         2         1       1            1           <none>          77s
+specialized-workloads-demo-ds-jdrds: ["sh","-c","sleep 3600"]
+specialized-workloads-demo-ds-jnmlc: ["sh","-c","sleep 7200"]
 ```
 
-DaemonSet supports the same `kubectl rollout history`/`rollout undo`
-tooling chapter 3 introduced for Deployments, tracked the same way -
-just backed by `ControllerRevision` objects instead of the
-per-revision ReplicaSets a Deployment uses (`kubectl get
-controllerrevision -l app=specialized-workloads-demo-ds` shows one per
-revision, and every Pod above carries a `controller-revision-hash`
-label pointing at which one it's currently running). `rollout undo`
-still only touches the DaemonSet's spec, not any Pod - under
-`OnDelete` that's the same one-more-inert-revision situation as any
-other template change:
+`kubectl rollout history` and `rollout undo` (chapter 3) work for
+DaemonSets too. A Deployment keeps a ReplicaSet for each revision; a
+DaemonSet keeps a **ControllerRevision** object instead, and each Pod's
+`controller-revision-hash` label says which revision it runs:
+
+```
+kubectl get controllerrevision -l app=specialized-workloads-demo-ds
+```
+
+```
+NAME                                       CONTROLLER                                     REVISION   AGE
+specialized-workloads-demo-ds-5dcc979dc8   daemonset.apps/specialized-workloads-demo-ds   1          77s
+specialized-workloads-demo-ds-7f855998fd   daemonset.apps/specialized-workloads-demo-ds   2          73s
+```
+
+`rollout undo` only changes the DaemonSet's template, so with
+`OnDelete` it's one more template change that no Pod picks up by
+itself:
 
 ```
 kubectl rollout undo daemonset specialized-workloads-demo-ds
@@ -347,49 +368,56 @@ kubectl rollout history daemonset specialized-workloads-demo-ds
 kubectl get pods -l app=specialized-workloads-demo-ds -o jsonpath='{range .items[*]}{.metadata.name}{": "}{.spec.containers[0].command}{"\n"}{end}'
 ```
 
-**Expected output**: a new revision (`3`) recorded from the undo, the
-DaemonSet's spec back to `sleep 3600` - but both existing Pods keep
-running exactly what they were running the moment before, still split
-across two different revisions, because `rollout undo` is still just a
-spec write and this DaemonSet is still `OnDelete`:
+**Expected output**: the undo is recorded as revision `3`, and the
+template is back to `sleep 3600`. Both Pods still run what they ran
+before. The warning is about `kubectl apply`'s record of what it last
+applied (chapter 2), which `rollout undo` doesn't update:
 
 ```
+Warning: resource daemonsets/specialized-workloads-demo-ds was previously managed with 'kubectl apply'. Rolling back will not update the kubectl.kubernetes.io/last-applied-configuration annotation, which may cause unexpected behavior on future 'kubectl apply' operations. Consider using 'kubectl apply' with your previous configuration file instead.
+daemonset.apps/specialized-workloads-demo-ds rolled back
 daemonset.apps/specialized-workloads-demo-ds
 REVISION  CHANGE-CAUSE
 2         <none>
 3         <none>
 
-specialized-workloads-demo-ds-5rd7p: ["sh","-c","sleep 7200"]
-specialized-workloads-demo-ds-l2fds: ["sh","-c","sleep 3600"]
+specialized-workloads-demo-ds-jdrds: ["sh","-c","sleep 3600"]
+specialized-workloads-demo-ds-jnmlc: ["sh","-c","sleep 7200"]
 ```
 
-Deleting the one Pod that was still on the now-abandoned `sleep 7200`
-revision converges the DaemonSet back to a single revision, `UP-TO-DATE`
-returning to `2`:
+Delete the Pod still running `sleep 7200`, and once its replacement is
+running, both Pods match the template again; `UP-TO-DATE` is back to
+`2`:
 
 ```
-$ kubectl delete pod specialized-workloads-demo-ds-5rd7p
-$ kubectl get daemonset specialized-workloads-demo-ds
+kubectl delete pod specialized-workloads-demo-ds-jnmlc
+kubectl get daemonset specialized-workloads-demo-ds
+```
+
+```
+pod "specialized-workloads-demo-ds-jnmlc" deleted from default namespace
 NAME                            DESIRED   CURRENT   READY   UP-TO-DATE   AVAILABLE   NODE SELECTOR   AGE
-specialized-workloads-demo-ds   2         2         2       2            2           <none>          114s
+specialized-workloads-demo-ds   2         2         2       2            2           <none>          2m
+```
+
+Delete the DaemonSet when you're done:
+
+```
+kubectl delete daemonset specialized-workloads-demo-ds
 ```
 
 ### Workloads that run to completion: Job and CronJob
 
-**Why**: not every workload should stay running. A batch computation, a
-migration script, a one-off maintenance task - these are meant to exit
-successfully and stop, and a Deployment (which restarts anything that
-exits, expecting it to run forever) is the wrong tool for that shape.
-Job exists specifically to run a Pod (or several) to completion and stop
-- no restart loop, no expectation of staying up. CronJob is a thin layer
-on top: it creates Job objects on a schedule rather than you creating
-one manually each time. Neither introduces a new architectural idea
-beyond "a controller that watches desired state and reconciles toward
-it" - they're just reconciling toward "N successful completions" instead
-of "N running replicas."
+**Why**: some work is meant to finish: a batch calculation, a database
+migration, a one-off maintenance task. A Deployment is the wrong tool,
+because it restarts any container that exits. A **Job** runs one or
+more Pods until they finish successfully, then stops. A **CronJob**
+creates Jobs on a schedule, so you don't have to create each one
+yourself. Both are controllers like the ones in chapter 3; they just
+aim for "N successful completions" instead of "N running replicas".
 
-**Example**: `tutorial/examples/specialized-workloads/job.yaml` runs a single
-completion:
+**Example**: [`job.yaml`](examples/specialized-workloads/job.yaml) runs
+once to completion:
 
 ```yaml
 apiVersion: batch/v1
@@ -410,38 +438,45 @@ spec:
 ```
 kubectl apply -f tutorial/examples/specialized-workloads/job.yaml
 kubectl get job specialized-workloads-demo-job
-kubectl get job specialized-workloads-demo-job -o jsonpath='{range .status.conditions[*]}{.type}{" "}{.status}{" "}{.lastTransitionTime}{"\n"}{end}'
-kubectl get pods -l job-name=specialized-workloads-demo-job -o jsonpath='{.items[0].metadata.labels}'
 ```
-
-**Expected output**: the Job reaches `1/1` completions on its own, no
-Deployment-style restart loop involved:
 
 ```
 job.batch/specialized-workloads-demo-job created
-
-NAME                 STATUS     COMPLETIONS   DURATION   AGE
-specialized-workloads-demo-job   Complete   1/1           10s        11s
-
-SuccessCriteriaMet True 2026-08-28T04:19:17Z
-Complete True 2026-08-28T04:19:17Z
-
-{"batch.kubernetes.io/controller-uid":"3714e799-...","batch.kubernetes.io/job-name":"specialized-workloads-demo-job","controller-uid":"3714e799-...","job-name":"specialized-workloads-demo-job"}
+NAME                             STATUS    COMPLETIONS   DURATION   AGE
+specialized-workloads-demo-job   Running   0/1                      0s
 ```
 
-Two things worth checking against, rather than assuming: the
-`SuccessCriteriaMet` and `Complete` conditions both landed at the exact
-same second here - for a Job this short-lived, there's no meaningfully
-observable gap between "criteria met" and "terminal state," even though
-the two are formally separate conditions (the gap that can exist between
-them is bounded by `terminationGracePeriodSeconds`, default 30s, and
-only shows up when a Pod actually takes time to terminate). And the
-created Pod carries **both** `job-name` and the newer
-`batch.kubernetes.io/job-name` label - the old unprefixed one stuck
-around for backward-compatible selectors, it isn't gone.
+About 15 seconds later, look at the Job, its conditions, its Pod's
+labels and its output:
 
-`tutorial/examples/specialized-workloads/cronjob.yaml` wraps the same idea in a
-schedule:
+```
+kubectl get job specialized-workloads-demo-job
+kubectl get job specialized-workloads-demo-job -o jsonpath='{range .status.conditions[*]}{.type}{" "}{.status}{" "}{.lastTransitionTime}{"\n"}{end}'
+kubectl get pods -l job-name=specialized-workloads-demo-job -o jsonpath='{.items[0].metadata.labels}{"\n"}'
+kubectl logs job/specialized-workloads-demo-job
+```
+
+**Expected output**: the Job reached `1/1` completions and stopped:
+
+```
+NAME                             STATUS     COMPLETIONS   DURATION   AGE
+specialized-workloads-demo-job   Complete   1/1           10s        15s
+SuccessCriteriaMet True 2026-11-19T11:42:55Z
+Complete True 2026-11-19T11:42:55Z
+{"batch.kubernetes.io/controller-uid":"a7dbb871-eef2-4c51-931f-1d3899511365","batch.kubernetes.io/job-name":"specialized-workloads-demo-job","controller-uid":"a7dbb871-eef2-4c51-931f-1d3899511365","job-name":"specialized-workloads-demo-job"}
+Hello from the Job
+```
+
+The Job has two conditions, `SuccessCriteriaMet` and `Complete`. They're
+separate because a Job's Pods may still be shutting down after it has
+succeeded; for a Job this short they were set at the same time. The Pod
+has two versions of the Job's name as labels: `job-name`, the original,
+and `batch.kubernetes.io/job-name`, the newer one. The old one is kept
+so that existing selectors still work.
+
+[`cronjob.yaml`](examples/specialized-workloads/cronjob.yaml) runs the
+same kind of Job every minute (`* * * * *`, in cron's schedule format),
+and keeps only the most recent successful and failed Job:
 
 ```yaml
 apiVersion: batch/v1
@@ -465,54 +500,58 @@ spec:
 
 ```
 kubectl apply -f tutorial/examples/specialized-workloads/cronjob.yaml
-kubectl get cronjob specialized-workloads-demo-cronjob
-kubectl get jobs | grep specialized-workloads-demo-cronjob
 ```
-
-**Expected output**: applied and then left running against this
-cluster for 29 minutes (schedule is every minute, so ~29 scheduled
-runs) before being checked again - deliberately longer than a quick
-sanity check, to make sure history rotation isn't just "the first couple
-of runs happen to look fine":
 
 ```
 cronjob.batch/specialized-workloads-demo-cronjob created
 ```
 
-```
-NAME                      SCHEDULE    SUSPEND   ACTIVE   LAST SCHEDULE   AGE
-specialized-workloads-demo-cronjob    * * * * *   False     0        29s             29m
-
-specialized-workloads-demo-cronjob-29798179   Complete   1/1   5s   29s
-```
-
-Only **one** completed Job exists, despite ~29 scheduled runs having
-happened over that 29 minutes - `successfulJobsHistoryLimit: 1` isn't
-just capping what's *displayed*, the CronJob controller is actively
-deleting each older Job as a newer one completes. This is why a Job
-that seems to have vanished, or a Job whose duration seems to have
-implausibly jumped between two checks, is almost always a *different*
-Job in a naming succession, not one Job behaving strangely - which is
-directly checkable from the retained Job's name:
+Let it run for a few minutes, then look at the CronJob and its Jobs:
 
 ```
-$ kubectl get cronjob specialized-workloads-demo-cronjob -o jsonpath='{.status.lastScheduleTime}'
-2026-08-28T04:19:00Z
-
-$ date -u -d "2026-08-28T04:19:00Z" +%s
-1787890740
-
-$ echo $(( 1787890740 / 60 ))
-29798179
+kubectl get cronjob specialized-workloads-demo-cronjob
+kubectl get jobs
 ```
 
-`specialized-workloads-demo-cronjob-29798179` - the numeric suffix is exactly
-`lastScheduleTime` as a Unix timestamp divided by 60, confirming the
-`<cronjob-name>-<unix-timestamp/60>` naming pattern directly rather than
-taking it on faith.
+**Expected output**: after about 4 minutes, the CronJob has run 4 times,
+but only **one** of its Jobs is left. (`specialized-workloads-demo-job`
+is the Job from the previous example.)
 
-Every workload covered so far - Pod, ReplicaSet, Deployment,
-StatefulSet, DaemonSet, Job, CronJob - still depends on the scheduler
-having actually picked a node for each Pod it creates, DaemonSet's
-generated `nodeAffinity` included. Chapter 7 covers how that placement
-decision gets made, and how to constrain it.
+```
+NAME                                 SCHEDULE    TIMEZONE   SUSPEND   ACTIVE   LAST SCHEDULE   AGE
+specialized-workloads-demo-cronjob   * * * * *   <none>     False     0        56s             3m50s
+NAME                                          STATUS     COMPLETIONS   DURATION   AGE
+specialized-workloads-demo-cronjob-29918146   Complete   1/1           6s         56s
+specialized-workloads-demo-job                Complete   1/1           10s        4m11s
+```
+
+`successfulJobsHistoryLimit: 1` makes the CronJob controller delete
+each older Job when a newer one completes. (Look just after a run
+starts and you'll see two: the last completed one and the new one,
+`Running`.) So if a Job seems to have disappeared, or its duration
+seems to have jumped between two checks, you're probably looking at a
+different Job with a similar name.
+
+The number at the end of the name is the time the Job was scheduled
+for, in minutes since 1 January 1970 (Unix time divided by 60). Here
+the last run was scheduled for 11:46 UTC:
+
+```
+kubectl get cronjob specialized-workloads-demo-cronjob -o jsonpath='{.status.lastScheduleTime}{"\n"}'
+echo $(( $(date -u -d 2026-11-19T11:46:00Z +%s) / 60 ))
+```
+
+```
+2026-11-19T11:46:00Z
+29918146
+```
+
+(`date -d` is GNU `date`, as on Linux; on macOS, use
+`date -u -j -f %Y-%m-%dT%H:%M:%SZ 2026-11-19T11:46:00Z +%s`.)
+
+Delete the CronJob and the Job when you're done:
+
+```
+kubectl delete cronjob specialized-workloads-demo-cronjob
+kubectl delete job specialized-workloads-demo-job
+```
