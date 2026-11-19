@@ -42,12 +42,13 @@ APISERVER=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.serv
 curl -sS -k -H "Authorization: Bearer $TOKEN" "$APISERVER/api/v1/namespaces/default/pods" -o /dev/null -w '%{http_code}\n'
 ```
 
-**Expected output**: no Secret for the ServiceAccount, so `grep` prints
-nothing. The API server accepts the token:
+**Expected output**: there's no Secret for the ServiceAccount (there are
+no Secrets in `default` at all, so `kubectl` says so), and the API
+server accepts the token:
 
 ```
 serviceaccount/security-demo-sa created
-(no secrets matched - expected since 1.24)
+No resources found in default namespace.
 403
 ```
 
@@ -80,12 +81,13 @@ use the same token for a request it's allowed to make and one it isn't:
 kubectl apply -f tutorial/examples/security/rbac-role.yaml
 kubectl apply -f tutorial/examples/security/rbac-rolebinding.yaml
 curl -sS -k -H "Authorization: Bearer $TOKEN" "$APISERVER/api/v1/namespaces/default/pods" -o /dev/null -w '%{http_code}\n'
-curl -sS -k -H "Authorization: Bearer $TOKEN" "$APISERVER/apis/apps/v1/namespaces/default/deployments" -o /dev/null -w '%{http_code}\n'
+curl -sS -k -H "Authorization: Bearer $TOKEN" "$APISERVER/apis/apps/v1/namespaces/default/deployments"
 ```
 
-**Expected output**: `200` for Pods, which the Role now allows, and
-`403` for Deployments. It's the same token both times; only the
-resource is different:
+**Expected output**: `200` for Pods, which the Role now allows. The
+second `curl` prints the whole response instead of just the status
+code, so you can see the error for Deployments. It's the same token
+both times; only the resource is different:
 
 ```
 role.rbac.authorization.k8s.io/security-demo-pod-reader created
@@ -96,12 +98,17 @@ rolebinding.rbac.authorization.k8s.io/security-demo-pod-reader-binding created
 ```
 {
   "kind": "Status",
+  "apiVersion": "v1",
+  "metadata": {},
   "status": "Failure",
   "message": "deployments.apps is forbidden: User \"system:serviceaccount:default:security-demo-sa\" cannot list resource \"deployments\" in API group \"apps\" in the namespace \"default\"",
   "reason": "Forbidden",
+  "details": {
+    "group": "apps",
+    "kind": "deployments"
+  },
   "code": 403
 }
-403
 ```
 
 The error says exactly what was missing: which identity, which verb,
@@ -202,10 +209,12 @@ the ClusterRoleBinding in the previous section, which grants
 whose certificate says `O=kubeadm:cluster-admins`.
 
 **Example**: decode the admin certificate from your kubeconfig and show
-its subject and issuer:
+its subject and issuer. `--minify` limits the output to the current
+context, so `users[0]` is the user for this cluster even if your
+kubeconfig has others:
 
 ```
-kubectl config view --raw -o jsonpath='{.users[0].user.client-certificate-data}' | base64 -d | openssl x509 -noout -subject -issuer
+kubectl config view --minify --raw -o jsonpath='{.users[0].user.client-certificate-data}' | base64 -d | openssl x509 -noout -subject -issuer
 ```
 
 **Expected output** (on this cluster, kubeadm/Kubernetes v1.36.1):
@@ -244,9 +253,9 @@ talking to the real API server.
 with `--cert`, `--key` and `--cacert`:
 
 ```
-kubectl config view --raw -o jsonpath='{.users[0].user.client-certificate-data}' | base64 -d > /tmp/admin.crt
-kubectl config view --raw -o jsonpath='{.users[0].user.client-key-data}' | base64 -d > /tmp/admin.key
-kubectl config view --raw -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' | base64 -d > /tmp/ca.crt
+kubectl config view --minify --raw -o jsonpath='{.users[0].user.client-certificate-data}' | base64 -d > /tmp/admin.crt
+kubectl config view --minify --raw -o jsonpath='{.users[0].user.client-key-data}' | base64 -d > /tmp/admin.key
+kubectl config view --minify --raw -o jsonpath='{.clusters[0].cluster.certificate-authority-data}' | base64 -d > /tmp/ca.crt
 curl -sS --cert /tmp/admin.crt --key /tmp/admin.key --cacert /tmp/ca.crt "$APISERVER/api/v1/namespaces/default/pods" -o /dev/null -w '%{http_code}\n'
 ```
 
@@ -256,6 +265,13 @@ API server's certificate, so `-k` (skip the check) wasn't needed:
 
 ```
 200
+```
+
+`/tmp/admin.key` is the cluster admin's private key. Delete the three
+files when you're done with them:
+
+```
+rm /tmp/admin.crt /tmp/admin.key /tmp/ca.crt
 ```
 
 ### `kubectl proxy`: letting kubectl handle identity and TLS
@@ -286,6 +302,11 @@ the cluster's own CA, which `curl` doesn't know about:
 
 ```
 curl: (60) SSL certificate OpenSSL verify result: unable to get local issuer certificate (20)
+More details here: https://curl.se/docs/sslcerts.html
+
+curl failed to verify the legitimacy of the server and therefore could not
+establish a secure connection to it. To learn more about this situation and
+how to fix it, please visit the webpage mentioned above.
 000
 ```
 
@@ -352,23 +373,28 @@ seccomp profile. It uses the same `nginx` image as earlier chapters:
 
 ```
 kubectl apply -f tutorial/examples/security/admission-allowed-crash-pod.yaml
-kubectl get pod security-demo-restricted-compliant-pod -n security-demo-restricted
-kubectl logs security-demo-restricted-compliant-pod -n security-demo-restricted
 ```
-
-**Expected output**: this time the Pod is created, and then it keeps
-crashing. The `nginx` image needs to create directories that only root
-can write to, and it's running as user 1000:
 
 ```
 pod/security-demo-restricted-compliant-pod created
-
-NAME                                      READY   STATUS   RESTARTS     AGE
-security-demo-restricted-compliant-pod   0/1     Error    1 (6s ago)   8s
 ```
 
+This time the Pod is created. Give it a minute (longer if `nginx:1.27`
+still has to be pulled), then look at it and at the end of its log:
+
 ```
-2026/08/28 05:38:49 [emerg] 1#1: mkdir() "/var/cache/nginx/client_temp" failed (13: Permission denied)
+kubectl get pod security-demo-restricted-compliant-pod -n security-demo-restricted
+kubectl logs security-demo-restricted-compliant-pod -n security-demo-restricted --tail=2
+```
+
+**Expected output**: the Pod keeps crashing. The `nginx` image needs to
+create directories that only root can write to, and it's running as
+user 1000:
+
+```
+NAME                                     READY   STATUS   RESTARTS      AGE
+security-demo-restricted-compliant-pod   0/1     Error    2 (18s ago)   91s
+2026/11/19 11:06:30 [emerg] 1#1: mkdir() "/var/cache/nginx/client_temp" failed (13: Permission denied)
 nginx: [emerg] mkdir() "/var/cache/nginx/client_temp" failed (13: Permission denied)
 ```
 
@@ -432,49 +458,63 @@ NetworkPolicy. Testing this chapter showed that it now does, with a
 built-in enforcer called `kube-network-policies` (see
 `docs/findings.md`, 2026-08-28).
 
-**Example**: on the `default` profile, create a target Pod and two
-client Pods. The policy will allow one client (labelled
-`role: frontend`) and not the other. Check that the second client can
-reach the target, apply the policy, and try again:
+**Example**: on the `default` profile, create a target Pod (nginx) and
+two client Pods (busybox). The policy will allow one client, labelled
+`role: frontend`, and not the other, labelled `role: other`:
 
 ```
 kubectl apply -f tutorial/examples/security/netpol-target-pod.yaml
 kubectl apply -f tutorial/examples/security/netpol-client-allowed-pod.yaml
 kubectl apply -f tutorial/examples/security/netpol-client-blocked-pod.yaml
+```
+
+When all three are `Running` (`kubectl get pods`), check that the
+second client can reach the target while there's no policy yet.
+`head -1` keeps just the first line of nginx's welcome page:
+
+```
 TARGET_IP=$(kubectl get pod security-demo-target -o jsonpath='{.status.podIP}')
-kubectl exec security-demo-client-blocked -- wget -qO- -T 5 "http://$TARGET_IP" | head -1   # baseline, no policy yet
+kubectl exec security-demo-client-blocked -- wget -qO- -T 5 "http://$TARGET_IP" | head -1
+```
+
+```
+<!DOCTYPE html>
+```
+
+Now apply the policy and try both clients:
+
+```
 kubectl apply -f tutorial/examples/security/networkpolicy.yaml
-kubectl exec security-demo-client-blocked -- wget -qO- -T 5 "http://$TARGET_IP" | head -1   # after the policy
+kubectl exec security-demo-client-blocked -- wget -qO- -T 5 "http://$TARGET_IP" | head -1
 kubectl exec security-demo-client-allowed -- wget -qO- -T 5 "http://$TARGET_IP" | head -1
-kubectl logs -n kube-system <a-kindnet-pod> | grep -i "network-polic"
 ```
 
-**Expected output (default profile, kindnetd)**: the second client
-reaches the target before the policy and not after it. The request
-times out rather than being refused, because the packets are dropped:
+**Expected output (default profile, kindnetd)**: the `role: other`
+client is blocked and the `role: frontend` client still gets the page.
+The blocked request times out after 5 seconds (`-T 5`) rather than
+being refused, because its packets are dropped:
 
 ```
-$ kubectl exec security-demo-client-blocked -- wget -qO- -T 5 "http://$TARGET_IP"   # before
-<!DOCTYPE html>...
-
-$ kubectl apply -f tutorial/examples/security/networkpolicy.yaml
 networkpolicy.networking.k8s.io/security-demo-netpol created
-
-$ kubectl exec security-demo-client-blocked -- wget -qO- -T 5 "http://$TARGET_IP"   # after
 wget: download timed out
 command terminated with exit code 1
-
-$ kubectl exec security-demo-client-allowed -- wget -qO- -T 5 "http://$TARGET_IP"   # after, matching Pod
-<!DOCTYPE html>...
+<!DOCTYPE html>
 ```
 
-kindnet's logs show the enforcer starting:
+kindnet's logs show the enforcer starting. `kubectl logs` on a
+DaemonSet picks one of its Pods and says which:
 
 ```
-"Starting controller" name="kube-network-policies"
-"Waiting for the policy engine to become ready..."
-"Policy engine is ready."
-"Syncing nftables rules" logger="nftables-sync"
+kubectl logs -n kube-system daemonset/kindnet | grep -iE "kube-network-policies|policy engine|nftables"
+```
+
+```
+Found 3 pods, using pod/kindnet-jspwg
+I1119 11:04:21.862342       1 controller.go:173] "Starting controller" name="kube-network-policies"
+I1119 11:04:21.862355       1 controller.go:178] "Waiting for the policy engine to become ready..."
+I1119 11:04:22.362472       1 controller.go:185] "Policy engine is ready."
+I1119 11:04:22.362577       1 controller.go:462] "Syncing nftables rules" logger="nftables-sync"
+I1119 11:04:22.365643       1 controller.go:465] "Syncing nftables rules" logger="nftables-sync" elapsed="3.037843ms"
 ```
 
 The `calico` profile uses Calico, a CNI built with NetworkPolicy in
@@ -505,10 +545,9 @@ kubectl exec security-demo-client-blocked -- wget -qO- -T 5 "http://$TARGET_IP" 
 The allowed client gets the page; the other one times out:
 
 ```
-<!DOCTYPE html>...          # allowed client - succeeds
-
+<!DOCTYPE html>
 wget: download timed out
-command terminated with exit code 1   # blocked client - fails
+command terminated with exit code 1
 ```
 
 To continue with the rest of the tutorial on `default`, switch back:
