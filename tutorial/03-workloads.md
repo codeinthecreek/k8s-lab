@@ -1,26 +1,23 @@
 # 3. Pods and workloads
 
-Chapter 2 covered the API model in the abstract, using a Namespace as
-the simplest possible object. This chapter is the first to cover an
-object type you'll actually run application code in: the Pod, and the
-two controllers built on top of it - ReplicaSet, then Deployment -
-that make Pods self-healing and upgradeable rather than one-shot.
-Every Pod here is interchangeable with any other matching the same
-template; chapter 6 covers workload shapes that deliberately break
-that assumption.
+Chapter 2 used a Namespace, the simplest object there is, to show how
+the API works. This chapter covers the objects that run your
+applications: the **Pod**, and two controllers built on it,
+**ReplicaSet** and **Deployment**, which replace Pods that disappear and
+update them in a controlled way. All the Pods in this chapter are
+interchangeable; chapter 6 covers workloads where they aren't.
 
 ### The Pod as the atomic unit
 
-**Why**: Kubernetes never schedules a container directly - it schedules
-a Pod, and a Pod is one or more containers that are always placed
-together on the same node, share a network namespace (one IP for the
-whole Pod, containers inside it reach each other over `localhost`), and
-can share volumes. A Pod is the smallest unit the scheduler reasons
-about; there's no such thing as independently scheduling two containers
-that need to co-locate - if they need to, they belong in one Pod.
+**Why**: Kubernetes never runs a container on its own. It runs **Pods**.
+A Pod is one or more containers that always run together on the same
+node. They share one IP address (containers in a Pod reach each other
+on `localhost`), and they can share volumes. The scheduler places
+whole Pods, so if two containers must run on the same node, they
+belong in the same Pod.
 
-**Example**: `tutorial/examples/workloads/pod.yaml` is a single-container
-Pod - the common case, but not the only shape a Pod can take:
+**Example**: [`pod.yaml`](examples/workloads/pod.yaml) is a Pod with one
+container, the most common case:
 
 ```yaml
 apiVersion: v1
@@ -42,145 +39,161 @@ kubectl apply -f tutorial/examples/workloads/pod.yaml
 kubectl get pod workloads-demo-pod -o wide
 ```
 
-**Expected output**: one running Pod with its own Pod IP, scheduled onto
-whichever worker node had capacity:
+**Expected output**: one running Pod with its own IP, on whichever
+worker the scheduler picked:
 
 ```
 pod/workloads-demo-pod created
-
-NAME                 READY   STATUS    RESTARTS   AGE   IP            NODE
-workloads-demo-pod   1/1     Running   0          40s   10.244.2.3    k8s-lab-default-worker2
+NAME                 READY   STATUS    RESTARTS   AGE   IP            NODE                      NOMINATED NODE   READINESS GATES
+workloads-demo-pod   1/1     Running   0          10s   10.244.1.34   k8s-lab-default-worker2   <none>           <none>
 ```
 
-### Why you almost never create a bare Pod directly
+(On a new cluster, the first `get` may show `ContainerCreating` while
+the `nginx:1.27` image is pulled. Run it again after a few seconds.)
 
-**Why**: a Pod object has no controller behind it, so there's a sharp
-line between two kinds of "recovery" that look similar but aren't. The
-**kubelet** on the Pod's node watches the containers *inside* that Pod
-and restarts one that crashes, because that's within a single Pod's own
-`restartPolicy` (default `Always`) - the Pod object itself never goes
-away, so this works with no controller involved. But if the **Pod
-object** itself is deleted - not a container inside it crashing, the
-whole object gone from etcd - nothing recreates it, because there's
-nothing watching "does a Pod named `workloads-demo-pod` currently exist"
-except whatever created it in the first place, and here that was you,
-once, manually. This is the entire reason ReplicaSet/Deployment exist:
-they add the missing "a Pod matching this template should always exist"
-controller on top.
+### Why you rarely create a Pod on its own
 
-**Example**: crash the container without touching the Pod object, then
-delete the Pod object itself, and compare:
+**Why**: there are two kinds of recovery, and a Pod on its own only
+gets one of them:
+
+- If a **container** in the Pod crashes, the kubelet on the node
+  restarts it, following the Pod's `restartPolicy` (`Always` by
+  default). The Pod itself stays, so nothing else is needed.
+- If the **Pod** is deleted, nothing recreates it. Nothing is watching
+  for "a Pod like this should exist", except whoever created it: here,
+  you, once.
+
+That missing piece is what ReplicaSets and Deployments add.
+
+**Example**: stop the container's main process, then delete the Pod,
+and compare:
 
 ```
-kubectl get pod workloads-demo-pod
 kubectl exec workloads-demo-pod -- sh -c "kill 1"
-# poll: kubectl get pod workloads-demo-pod
+kubectl get pod workloads-demo-pod
+```
+
+Right after the `kill`, the container has stopped:
+
+```
+NAME                 READY   STATUS      RESTARTS   AGE
+workloads-demo-pod   0/1     Completed   0          11s
+```
+
+Run the `get` again a few seconds later.
+
+**Expected output**: `RESTARTS` has gone up on the *same* Pod. The name
+is the same and `AGE` keeps counting: the kubelet restarted the
+container (nginx, the main process, PID 1), and the Pod was never
+replaced:
+
+```
+NAME                 READY   STATUS    RESTARTS      AGE
+workloads-demo-pod   1/1     Running   1 (10s ago)   20s
+```
+
+Deleting the Pod is different: it stays gone:
+
+```
 kubectl delete pod workloads-demo-pod
 kubectl get pod workloads-demo-pod
 ```
 
-**Expected output**: killing PID 1 inside the container (the nginx
-process) increments `RESTARTS` on the *same* Pod - name and continuously
-growing `AGE` unchanged, proving kubelet restarted the container in
-place rather than anything being recreated:
-
 ```
-NAME                 READY   STATUS    RESTARTS   AGE
-workloads-demo-pod   1/1     Running   0           45s
-
-$ kubectl exec workloads-demo-pod -- sh -c "kill 1"
-
-NAME                 READY   STATUS         RESTARTS      AGE
-workloads-demo-pod   1/1     Running        1 (9s ago)    54s
-```
-
-Deleting the Pod object itself is a different story - it stays gone:
-
-```
-$ kubectl delete pod workloads-demo-pod
 pod "workloads-demo-pod" deleted from default namespace
-
-$ kubectl get pod workloads-demo-pod
 Error from server (NotFound): pods "workloads-demo-pod" not found
 ```
 
-### ReplicaSet: maintaining a stable set of replicas
+### ReplicaSet: keeping a number of Pods running
 
-**Why**: a ReplicaSet's job is narrow - given a Pod template and a
-desired replica count, make sure that many Pods matching its
-`spec.selector` exist, continuously. The detail worth internalizing is
-*how* it tracks "its" Pods: purely by label selector, not by any
-ownership field on the Pods themselves. `spec.selector` is the
-ReplicaSet's actual identity as far as reconciliation goes - which means
-a ReplicaSet can be deleted while leaving its Pods alone, and a new
-ReplicaSet with a matching selector will adopt whatever Pods it finds
-rather than creating duplicates.
+**Why**: a ReplicaSet makes sure a given number of Pods, built from its
+Pod template, exist at all times. It finds "its" Pods by their labels,
+using its `spec.selector`. So you can delete a ReplicaSet and leave its
+Pods running, and a new ReplicaSet with the same selector will take
+over the Pods it finds instead of creating new ones.
 
-**Example**: `tutorial/examples/workloads/replicaset.yaml` runs 3
-replicas behind `selector.matchLabels.app: workloads-demo-rs`. Delete it
-with `--cascade=orphan` (detach without deleting the Pods), confirm the
-Pods survive, then re-apply the same ReplicaSet and check whether it
-creates new Pods or adopts the orphans:
+**Example**: [`replicaset.yaml`](examples/workloads/replicaset.yaml) runs
+3 replicas with the selector `app: workloads-demo-rs`. Delete it with
+`--cascade=orphan`, which keeps its Pods, check that they're still
+there, then apply the same ReplicaSet again and see whether it creates
+new Pods or takes over the old ones:
 
 ```
 kubectl apply -f tutorial/examples/workloads/replicaset.yaml
+kubectl get pods -l app=workloads-demo-rs -o custom-columns=NAME:.metadata.name,CREATED:.metadata.creationTimestamp
+```
+
+`-o custom-columns` prints just the columns you name, here each Pod's
+name and creation time:
+
+```
+replicaset.apps/workloads-demo-rs created
+NAME                      CREATED
+workloads-demo-rs-44mw6   2026-11-19T11:56:29Z
+workloads-demo-rs-6lj9h   2026-11-19T11:56:29Z
+workloads-demo-rs-bl9q6   2026-11-19T11:56:29Z
+```
+
+Delete the ReplicaSet but keep its Pods, then list them:
+
+```
 kubectl delete rs workloads-demo-rs --cascade=orphan
 kubectl get pods -l app=workloads-demo-rs
-kubectl apply -f tutorial/examples/workloads/replicaset.yaml
-kubectl get pods -l app=workloads-demo-rs -o custom-columns=NAME:.metadata.name,AGE:.metadata.creationTimestamp
 ```
 
-**Expected output**: the 3 Pods created by the first apply keep the
-exact same names throughout - orphaned, still `Running`, and then
-adopted, never recreated:
-
 ```
-$ kubectl get pods -l app=workloads-demo-rs -o custom-columns=NAME:...,AGE:...
-workloads-demo-rs-clsqq   2026-08-28T03:49:54Z
-workloads-demo-rs-l8h7v   2026-08-28T03:49:54Z
-workloads-demo-rs-zgzbd   2026-08-28T03:49:54Z
-
-$ kubectl delete rs workloads-demo-rs --cascade=orphan
 replicaset.apps "workloads-demo-rs" deleted from default namespace
-
-$ kubectl get pods -l app=workloads-demo-rs
-workloads-demo-rs-clsqq   1/1   Running   0   44s
-workloads-demo-rs-l8h7v   1/1   Running   0   44s
-workloads-demo-rs-zgzbd   1/1   Running   0   44s
-
-$ kubectl apply -f tutorial/examples/workloads/replicaset.yaml
-replicaset.apps/workloads-demo-rs created
-
-$ kubectl get pods -l app=workloads-demo-rs -o custom-columns=NAME:...,AGE:...
-workloads-demo-rs-clsqq   2026-08-28T03:49:54Z
-workloads-demo-rs-l8h7v   2026-08-28T03:49:54Z
-workloads-demo-rs-zgzbd   2026-08-28T03:49:54Z
+NAME                      READY   STATUS    RESTARTS   AGE
+workloads-demo-rs-44mw6   1/1     Running   0          9s
+workloads-demo-rs-6lj9h   1/1     Running   0          9s
+workloads-demo-rs-bl9q6   1/1     Running   0          9s
 ```
 
-Same three names, same creation timestamps, both before and after -
-the new ReplicaSet object went straight to `3/3` ready within seconds
-because it found and adopted existing Pods matching its selector rather
-than creating anything. A ReplicaSet naming a Pod it didn't create isn't
-a bug; it's the selector-based model working as designed.
+Apply the same ReplicaSet again, and look at the Pods and the
+ReplicaSet:
 
-### Deployment: managing ReplicaSets, rolling updates
+```
+kubectl apply -f tutorial/examples/workloads/replicaset.yaml
+kubectl get pods -l app=workloads-demo-rs -o custom-columns=NAME:.metadata.name,CREATED:.metadata.creationTimestamp
+kubectl get rs workloads-demo-rs
+```
 
-**Why**: a ReplicaSet alone can't change its own Pod template without
-either killing everything at once or requiring you to hand-manage a
-second ReplicaSet during a transition. A Deployment adds exactly that
-missing layer: it owns one or more ReplicaSets, and changing the
-Deployment's Pod template (a new image, for instance) makes it create a
-*new* ReplicaSet and gradually shift replica counts from the old one to
-the new one - a rolling update - rather than mutating Pods in place.
-This is why `kubectl rollout status/history/undo` are Deployment-level
-commands: the rollout is a Deployment concept, ReplicaSets are just the
-mechanism it uses underneath.
+**Expected output**: the same 3 Pods throughout. They kept running
+without a ReplicaSet, and the new ReplicaSet took them over instead of
+creating new ones:
 
-**Example**: `tutorial/examples/workloads/deployment.yaml` runs the same
-3-replica nginx workload as a Deployment instead. Set a change-cause
-annotation *before* triggering the update (it has to happen first, or it
-won't be attached to the new revision), bump the image, and watch the
-ReplicaSet churn:
+```
+replicaset.apps/workloads-demo-rs created
+NAME                      CREATED
+workloads-demo-rs-44mw6   2026-11-19T11:56:29Z
+workloads-demo-rs-6lj9h   2026-11-19T11:56:29Z
+workloads-demo-rs-bl9q6   2026-11-19T11:56:29Z
+NAME                DESIRED   CURRENT   READY   AGE
+workloads-demo-rs   3         3         3       2s
+```
+
+The names and creation times are the same before and after. The new
+ReplicaSet was at `3/3` ready within seconds, because it found running
+Pods that matched its selector. A ReplicaSet can own Pods it didn't
+create; that's how selectors work.
+
+### Deployment: rolling updates through ReplicaSets
+
+**Why**: a ReplicaSet can't update its Pods to a new template on its
+own: you'd have to delete them all at once, or manage a second
+ReplicaSet yourself. A **Deployment** does that for you. It manages
+ReplicaSets, and when you change its Pod template (a new image, for
+example), it creates a *new* ReplicaSet and gradually moves replicas
+from the old one to the new one. That's a **rolling update**. This is
+why `kubectl rollout status`, `history` and `undo` work on
+Deployments: rollouts belong to the Deployment, and ReplicaSets are
+how it carries them out.
+
+**Example**: [`deployment.yaml`](examples/workloads/deployment.yaml) runs
+the same 3 nginx replicas as a Deployment. Record a reason for the
+change in the `kubernetes.io/change-cause` annotation *before* making
+it (afterwards is too late for the new revision), then change the
+image and follow the rollout:
 
 ```
 kubectl apply -f tutorial/examples/workloads/deployment.yaml
@@ -191,45 +204,43 @@ kubectl get rs -l app=workloads-demo-deploy
 kubectl rollout history deployment/workloads-demo-deploy
 ```
 
-**Expected output**: the rollout proceeds one Pod at a time (default
-`RollingUpdate` strategy), and once complete there are two ReplicaSets -
-the old one scaled to zero, kept around rather than deleted (that's what
-makes `kubectl rollout undo` possible):
+**Expected output**: Pods are replaced one at a time (the default
+`RollingUpdate` strategy); `rollout status` reports progress until it's
+done, repeating lines while it waits (shortened here). Afterwards there
+are two ReplicaSets: the new one, and the old one scaled to zero. The
+old one is kept so that `kubectl rollout undo` can go back to it:
 
 ```
 deployment.apps/workloads-demo-deploy created
 deployment.apps/workloads-demo-deploy annotated
 deployment.apps/workloads-demo-deploy image updated
-
 Waiting for deployment spec update to be observed...
+Waiting for deployment "workloads-demo-deploy" rollout to finish: 0 out of 3 new replicas have been updated...
 Waiting for deployment "workloads-demo-deploy" rollout to finish: 1 out of 3 new replicas have been updated...
 Waiting for deployment "workloads-demo-deploy" rollout to finish: 2 out of 3 new replicas have been updated...
 Waiting for deployment "workloads-demo-deploy" rollout to finish: 1 old replicas are pending termination...
 deployment "workloads-demo-deploy" successfully rolled out
-
-NAME                                DESIRED   CURRENT   READY   AGE
-workloads-demo-deploy-5f48cd94b9   3         3         3       85s
-workloads-demo-deploy-75bf95bd74   0         0         0       95s
-
+NAME                               DESIRED   CURRENT   READY   AGE
+workloads-demo-deploy-5f48cd94b9   3         3         3       80s
+workloads-demo-deploy-75bf95bd74   0         0         0       81s
+deployment.apps/workloads-demo-deploy
 REVISION  CHANGE-CAUSE
 1         bump nginx to 1.28
 2         bump nginx to 1.28
 ```
 
-Two things worth noticing in that last block. First, both revisions show
-the *same* change-cause text - because the annotate command ran while
-revision 1 was still the Deployment's only/current ReplicaSet, the
-annotation landed there too, not just on the revision created
-afterward. Annotating "before the change" scopes the *timing* correctly
-relative to triggering the rollout, but doesn't cleanly scope which
-revision(s) end up carrying it - a real, mildly surprising interaction
-worth expecting rather than being confused by. Second: `--record` isn't
-used here because it's been removed entirely (fails with `unknown flag:
---record`) - `kubectl annotate ... kubernetes.io/change-cause=... `
-beforehand is the current replacement.
+Both revisions show the same change cause. The annotation was added
+while revision 1 was the current ReplicaSet, so it was copied there
+too, as well as to revision 2. Adding it before the change gets it
+onto the new revision, but it may end up on the old one as well.
 
-The other easy assumption to check: does re-running the exact same
-`set image` command create another revision?
+Older material uses `kubectl set image ... --record` to fill in the
+change cause. `--record` is deprecated: it still works, but prints
+`Flag --record has been deprecated, --record will be removed in the
+future`. Use `kubectl annotate` as above.
+
+Does running the same `set image` command again create another
+revision?
 
 ```
 kubectl set image deployment/workloads-demo-deploy nginx=nginx:1.28
@@ -237,37 +248,34 @@ kubectl rollout history deployment/workloads-demo-deploy
 ```
 
 ```
-(no output - exit 0)
-
+deployment.apps/workloads-demo-deploy
 REVISION  CHANGE-CAUSE
 1         bump nginx to 1.28
 2         bump nginx to 1.28
 ```
 
-No new revision, and no confirmation message either - `kubectl set
-image` diffs the target value against what's already there and does
-nothing at all if it matches, silently. If you're scripting a rollout
-and expecting every invocation to produce a new revision, this is the
-failure mode: rerunning with an unchanged target is a true no-op, not an
-error you'd notice.
+No, and `set image` printed nothing at all. It compares the new image
+with the current one, and if they're the same, it does nothing. A script
+that expects a new revision every time it runs won't get one, and
+won't see an error either.
 
 ### Cleaning up
 
-This chapter leaves a ReplicaSet and a Deployment running in the
-`default` namespace, along with the Pods and the two Deployment
-ReplicaSets they own (the bare Pod was already deleted above). Delete
-both controllers; the default cascade removes everything they own:
+The ReplicaSet and the Deployment are still running (the bare Pod is
+already gone). Delete both; by default, deleting a controller also
+deletes everything it owns:
 
 ```
 kubectl delete rs workloads-demo-rs
 kubectl delete deployment workloads-demo-deploy
 ```
 
-Pods can take a few seconds to terminate. Confirm nothing is left:
+Pods can take a few seconds to stop. Check that nothing is left:
 
 ```
 kubectl get rs,pods -l 'app in (workloads-demo-rs, workloads-demo-deploy)'
 ```
 
-An empty result (`No resources found in default namespace.`) means the
-chapter is fully cleaned up.
+(`-l 'app in (...)'` is a set-based selector: it matches either
+label value.) When it says `No resources found in default namespace.`, the chapter is
+cleaned up.

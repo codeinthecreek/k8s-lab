@@ -1,75 +1,78 @@
 # 2. The API model
 
-Everything in Kubernetes - Pods, Services, the control-plane components
-from chapter 1's static pods - is represented the same way: an object
-submitted to the apiserver, stored in etcd, and reconciled toward by
-some controller. This chapter covers that model directly, before any
-specific object type, because every later chapter is really just "here's
-what `spec` means for this one kind of object."
+Everything in Kubernetes, from Pods and Services to the control-plane
+components from chapter 1, is represented the same way: as an **object**
+that you send to the API server, which stores it in etcd, and that a
+controller then works to make real. This chapter covers that model
+before any particular kind of object. Every later chapter builds on it:
+each one explains what `spec` means for one kind of object.
 
 ### Desired state vs. actual state
 
-**Why**: Kubernetes objects don't describe an action to take - they
-describe a state to maintain. You don't tell it "start 3 replicas now,"
-you tell it "3 replicas should exist," and a controller keeps making
-that true, continuously, independent of whatever caused the current
-state to drift. This is why deleting something a controller manages
-usually isn't destructive in the way it sounds: you're not removing the
-desired state, only a piece of the currently-observed state, and the
-controller notices the gap and closes it.
+**Why**: an object doesn't describe an action, it describes a state to
+keep. You don't say "start 3 replicas now"; you say "3 replicas should
+exist", and a controller keeps making that true, whatever changes
+around it. That's why deleting something a controller manages often
+does less than it sounds: you've removed part of the current state,
+not the desired state, and the controller notices the difference and
+fixes it.
 
-**Example**: `kube-proxy` runs as a DaemonSet in `kube-system` - one Pod
-per node (chapter 3 covers what a Pod actually is), desired count fixed
-by node count, no user intervention. Delete one of its Pods directly
-and watch what happens to desired state versus what you just changed:
+**Example**: `kube-proxy` runs in `kube-system` as a DaemonSet: one Pod
+on each node (chapter 3 covers Pods, chapter 6 DaemonSets). Delete one
+of its Pods, using a name from your own listing, and see what
+happens:
 
 ```
 kubectl get pods -n kube-system -l k8s-app=kube-proxy
-kubectl delete pod -n kube-system <one-pod-name-from-above>
+```
+
+```
+NAME               READY   STATUS    RESTARTS   AGE
+kube-proxy-6bz4p   1/1     Running   0          37m
+kube-proxy-7nxhc   1/1     Running   0          37m
+kube-proxy-8hdgr   1/1     Running   0          37m
+```
+
+```
+kubectl delete pod -n kube-system kube-proxy-6bz4p
 kubectl get pods -n kube-system -l k8s-app=kube-proxy
 ```
 
 **Expected output**: the deleted Pod is gone, and a replacement with a
-new name appears on its own within seconds, without anyone re-declaring
-"I want 3 kube-proxy Pods" - that desired state was never touched:
+new name is already being created. Nobody said again "there should be
+a kube-proxy Pod on every node"; that desired state never changed:
 
 ```
-NAME               READY   STATUS    RESTARTS   AGE
-kube-proxy-6fmjz   1/1     Running   0          16h
-kube-proxy-lcn5k   1/1     Running   0          16h
-kube-proxy-xx42q   1/1     Running   0          16h
-
-$ kubectl delete pod -n kube-system kube-proxy-6fmjz
-pod "kube-proxy-6fmjz" deleted from kube-system namespace
-
-NAME               READY   STATUS    RESTARTS   AGE
-kube-proxy-9vnfm   1/1     Running   0          8s
-kube-proxy-lcn5k   1/1     Running   0          16h
-kube-proxy-xx42q   1/1     Running   0          16h
+pod "kube-proxy-6bz4p" deleted from kube-system namespace
+NAME               READY   STATUS              RESTARTS   AGE
+kube-proxy-7nxhc   1/1     Running             0          37m
+kube-proxy-859c2   0/1     ContainerCreating   0          1s
+kube-proxy-8hdgr   1/1     Running             0          37m
 ```
 
-`kube-proxy-9vnfm` is a genuinely new Pod object, not the old one
-restarted - the DaemonSet controller (chapter 6 covers DaemonSet in
-depth) is watching desired vs. actual node coverage and created it the
-moment it saw one node without a kube-proxy Pod.
+A few seconds later, `kube-proxy-859c2` is `Running` too.
+
+`kube-proxy-859c2` is a new Pod, not the old one restarted. The
+DaemonSet controller saw a node without a kube-proxy Pod and created
+one.
 
 ### Anatomy of an object: apiVersion, kind, metadata, spec, status
 
-**Why**: every object, regardless of type, is submitted with the same
-four top-level fields. `apiVersion` and `kind` identify which API group
-and schema the rest of the object is validated against. `metadata`
-carries identity (name, namespace, labels, annotations) - things that
-apply uniformly across every object type. `spec` is where the type-
-specific desired state lives, and its shape is entirely different per
-`kind` - a Namespace's spec looks nothing like a Deployment's. What you
-never write yourself is `status`: it's a separate part of the object
-that only the apiserver and controllers populate, reporting observed
-state back. Submitting a `status` in a create/apply is accepted but
-ignored for most types - it isn't how you make anything happen.
+**Why**: every object has the same top-level fields:
 
-**Example**: `tutorial/examples/api-model/namespace.yaml` is about as
-minimal an object as exists - a Namespace needs nothing under `spec` to
-be valid:
+- `apiVersion` and `kind` say what type of object it is, and so which
+  schema the rest is checked against.
+- `metadata` holds the object's identity: name, namespace, labels,
+  annotations. It's the same for every type.
+- `spec` is the desired state. Its contents are completely different
+  for each `kind`.
+- `status` is the observed state. You don't write it; the API server
+  and controllers fill it in. If you include it in a file you apply,
+  it's ignored for most types.
+
+**Example**: [`namespace.yaml`](examples/api-model/namespace.yaml) is
+about as small as an object can be. A Namespace doesn't need a
+`spec`:
 
 ```yaml
 apiVersion: v1
@@ -83,22 +86,23 @@ kubectl apply -f tutorial/examples/api-model/namespace.yaml
 kubectl get namespace tutorial-api-model -o yaml
 ```
 
-**Expected output**: `namespace/tutorial-api-model created`, and the
-object read back has substantially more in it than what was submitted:
+**Expected output**: the object you get back has much more in it than
+you sent:
 
 ```yaml
+namespace/tutorial-api-model created
 apiVersion: v1
 kind: Namespace
 metadata:
   annotations:
     kubectl.kubernetes.io/last-applied-configuration: |
       {"apiVersion":"v1","kind":"Namespace","metadata":{"annotations":{},"name":"tutorial-api-model"}}
-  creationTimestamp: "2026-08-28T03:34:24Z"
+  creationTimestamp: "2026-11-19T11:59:48Z"
   labels:
     kubernetes.io/metadata.name: tutorial-api-model
   name: tutorial-api-model
-  resourceVersion: "99893"
-  uid: 7ce8ace6-fb9f-46c3-a194-b990ca2cd702
+  resourceVersion: "6783"
+  uid: 1193fa2f-5f1d-4b0a-b943-38a310fb626a
 spec:
   finalizers:
   - kubernetes
@@ -106,39 +110,32 @@ status:
   phase: Active
 ```
 
-None of `creationTimestamp`, `uid`, `resourceVersion`, the
-`kubernetes.io/metadata.name` label, `spec.finalizers`, the
-`last-applied-configuration` annotation, or the entire `status` block
-were in the file that got applied - the apiserver added all of it. The
-`kubernetes.io/metadata.name` label in particular is worth noticing: an
-admission controller - a piece of apiserver logic that intercepts a
-request after auth and before it's persisted, and can mutate or reject
-it; chapter 9 covers this stage properly - adds it to every namespace
-automatically, which is what makes label selectors like
-`kubernetes.io/metadata.name=<ns>` usable for targeting a specific
-namespace elsewhere in the API (NetworkPolicy namespaceSelectors, for
-instance - chapter 9).
+The file had none of `creationTimestamp`, `uid`, `resourceVersion`,
+the `kubernetes.io/metadata.name` label, `spec.finalizers`, the
+`last-applied-configuration` annotation or `status`; the API server and
+`kubectl` added them. The `kubernetes.io/metadata.name` label is added
+to every namespace by an **admission plugin**, part of the API server
+that can change or reject requests before they're stored (chapter 9).
+It lets you select a namespace by name with a label selector, which
+NetworkPolicy uses, for example (chapter 9).
 
-### Why namespaces: isolation, scoping, and multi-tenancy
+### Why namespaces: scope, not isolation
 
-**Why**: a Namespace isn't a security boundary by itself - a Pod in one
-namespace can still reach a Service in another over the network unless
-something explicitly stops it (chapter 9's NetworkPolicy). What it
-*does* provide is a scoping boundary that almost everything else in
-Kubernetes is defined relative to: object names only have to be unique
-within a namespace, not across the whole cluster, and mechanisms like
-RBAC (chapter 9) and ResourceQuota (chapter 7) apply per-namespace by default. This
-is what makes a namespace the practical unit for dividing one physical
-cluster among multiple teams, applications, or environments (`staging`
-vs `prod`, `team-a` vs `team-b`) without them colliding on names or
-needing separate infrastructure. Not every object is scoped this way,
-though - `Node`, `PersistentVolume`, `ClusterRole`, and `Namespace`
-itself exist once per cluster regardless of namespace, checkable
-directly with `kubectl api-resources --namespaced=false`.
+**Why**: a namespace is not a security boundary on its own: a Pod in
+one namespace can reach a Service in another unless something stops it
+(NetworkPolicy, chapter 9). What it provides is scope:
 
-**Example**: the exact same object name, `Pod` and all, created in two
-different namespaces at once - something a single flat namespace
-couldn't allow:
+- Object names only have to be unique within a namespace.
+- RBAC (chapter 9) and ResourceQuota (chapter 7) apply per namespace.
+
+That makes a namespace the usual way to divide a cluster between
+teams, applications or environments (`staging` and `prod`, `team-a` and
+`team-b`) without name clashes or separate clusters. Some objects don't
+belong to any namespace: `Node`, `PersistentVolume`, `ClusterRole` and
+`Namespace` itself, among others. `kubectl api-resources
+--namespaced=false` lists them all.
+
+**Example**: two Pods with the same name, in two namespaces at once:
 
 ```
 kubectl create namespace tutorial-api-model-team-b
@@ -148,177 +145,145 @@ kubectl get pods -n tutorial-api-model
 kubectl get pods -n tutorial-api-model-team-b
 ```
 
-**Expected output**: two genuinely separate Pod objects, same name,
-neither aware the other exists:
+**Expected output**: two separate Pods with the same name:
 
 ```
 namespace/tutorial-api-model-team-b created
 pod/namespace-demo created
 pod/namespace-demo created
-
 NAME             READY   STATUS    RESTARTS   AGE
-namespace-demo   1/1     Running   0          4s
-
+namespace-demo   1/1     Running   0          5s
 NAME             READY   STATUS    RESTARTS   AGE
-namespace-demo   1/1     Running   0          3s
+namespace-demo   1/1     Running   0          5s
 ```
 
-This is also why `kube-system` is kept separate from `default` rather
-than running the control plane's own DaemonSets and Deployments
-alongside whatever the cluster is actually used for: a `kubectl delete
-pods --all -n default`, or a ResourceQuota applied to `default`, has
-zero effect on anything in `kube-system` (`kube-proxy`, CoreDNS, and
-everything else chapter 1 covered), and vice versa. Namespace boundaries
-being the thing access control is drawn against also carries forward
-into chapter 9, where every effective RBAC permission is the union of
-whichever `Role`/`ClusterRole` objects are bound to an identity - a
-`Role` scoped to a single namespace, a `ClusterRole` scoped to the whole
-cluster - a distinction that only makes sense once namespace scoping
-itself is a solid mental model, which is what this section is for.
+It's also why the cluster's own components live in `kube-system`, not
+`default`: `kubectl delete pods --all -n default`, or a ResourceQuota
+on `default`, doesn't affect kube-proxy, CoreDNS or anything else from
+chapter 1.
 
 ### kubectl as an API client, not a special protocol
 
-**Why**: `kubectl` has no privileged channel into the cluster - it builds
-plain HTTPS requests against the same REST API any other client (a
-controller, a CI pipeline using a service account token, `curl` with a
-bearer token) would use, gets JSON back, and renders it. `-v=8` turns on
-request/response tracing so this stops being an assertion and becomes
-something you can watch happen.
+**Why**: `kubectl` has no special way into the cluster. It sends ordinary
+HTTPS requests to the same REST API that every other client uses
+(controllers, CI pipelines, `curl` with a token), gets JSON back, and
+formats it for you. `-v=8` makes `kubectl` print each request and
+response, so you can see this for yourself.
 
-**Example**: a read and a write against the same object, traced:
-
-```
-kubectl get namespace tutorial-api-model -v=8 2>&1
-kubectl label namespace tutorial-api-model tutorial.example/stage=relabeled -v=8 2>&1
-```
-
-**Expected output**: a `GET` for the read, a `PATCH` carrying a JSON
-merge-patch body for the label write - both plain HTTP against the same
-resource URL:
+**Example**: a read and a write on the same object, with tracing:
 
 ```
-"Request" verb="GET" url="https://127.0.0.1:34415/api/v1/namespaces/tutorial-api-model"
-"Response" status="200 OK"
+kubectl get namespace tutorial-api-model -v=8 2>&1 | grep -E '"Request"|"Response"|Request Body'
+kubectl label namespace tutorial-api-model tutorial.example/stage=relabeled -v=8 2>&1 | grep -E '"Request"|"Response"|Request Body'
 ```
 
+`-v=8` prints a lot (every header, the full response body), so `grep`
+keeps only the request and response lines.
+
+**Expected output**: a `GET` for the read. For the label change,
+`kubectl` first reads the object with a `GET`, then sends a `PATCH`
+with a JSON body containing just the new label. All are plain HTTP
+requests to the same URL:
+
 ```
-"Request Body" body="{\"metadata\":{\"labels\":{\"tutorial.example/stage\":\"relabeled\"}}}"
-"Request" verb="PATCH" url="https://127.0.0.1:34415/api/v1/namespaces/tutorial-api-model?fieldManager=kubectl-label"
-"Response" status="200 OK"
+I1119 11:59:59.614249 1515675 helper.go:105] "Request Body" body=""
+I1119 11:59:59.614292 1515675 round_trippers.go:527] "Request" verb="GET" url="https://127.0.0.1:41419/api/v1/namespaces/tutorial-api-model" headers=<
+I1119 11:59:59.621013 1515675 round_trippers.go:632] "Response" status="200 OK" headers=<
+I1119 11:59:59.682272 1515688 helper.go:105] "Request Body" body=""
+I1119 11:59:59.682311 1515688 round_trippers.go:527] "Request" verb="GET" url="https://127.0.0.1:41419/api/v1/namespaces/tutorial-api-model" headers=<
+I1119 11:59:59.689538 1515688 round_trippers.go:632] "Response" status="200 OK" headers=<
+I1119 11:59:59.690209 1515688 helper.go:269] "Request Body" body="{\"metadata\":{\"labels\":{\"tutorial.example/stage\":\"relabeled\"}}}"
+I1119 11:59:59.690249 1515688 round_trippers.go:527] "Request" verb="PATCH" url="https://127.0.0.1:41419/api/v1/namespaces/tutorial-api-model?fieldManager=kubectl-label" headers=<
+I1119 11:59:59.747111 1515688 round_trippers.go:632] "Response" status="200 OK" headers=<
 ```
 
-The port in that URL (`34415` here) is kind's randomly-assigned
-apiserver host port for this cluster (see chapter 1's node-as-container
-model and the top-level README's architecture diagram) - it'll differ
-per cluster, the request shape won't.
+The port in the URL (`41419` here) is the port kind chose for this
+cluster's API server on your host (chapter 1). It's different for
+every cluster; the requests look the same.
 
-> **Aside** (a detour from this section's actual point - skippable):
-> kubectl caches a server's OpenAPI/discovery data (which API groups,
-> resources, and shortnames exist - what makes `kubectl get ep` resolve
-> to `endpoints` at all) under `~/.kube/cache/discovery/<server-address>/`,
-> keyed by host:port, not by "which cluster this is." Recreating a kind
-> cluster gets a fresh, randomly-assigned apiserver port, so it never
-> reuses or invalidates an old entry - it just leaves it behind:
->
-> ```
-> $ kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}'
-> https://127.0.0.1:36673
-> $ ls ~/.kube/cache/discovery/
-> 127.0.0.1_34415
-> 127.0.0.1_34503
-> 127.0.0.1_35045
-> 127.0.0.1_36541
-> 127.0.0.1_36673
-> 127.0.0.1_38431
-> ...
-> ```
->
-> `34415` is the exact port this section's own trace above hit - still
-> sitting there, stale. None of those stale directories cause wrong
-> answers - a cache miss just means kubectl re-fetches on the next call
-> - they're disk clutter, safe to delete wholesale
-> (`rm -rf ~/.kube/cache/discovery/*`) any time.
+> **Aside**: `kubectl` caches what it learns about a server's API (which
+> resources and short names exist; that's how it knows `ep` means
+> `endpoints`) in `~/.kube/cache/discovery/<host>_<port>/`. Each new
+> kind cluster gets a new random port, so old directories pile up. They
+> do no harm, since a missing entry is just fetched again, and you can
+> delete them all at any time with `rm -rf ~/.kube/cache/discovery/*`.
 
 ### `kubectl apply`: diff and PATCH, not blind create
 
-**Why**: `apply` is not "delete and recreate from this file," and it's
-not a naive "add whatever fields are in the file" either. It computes a
-three-way merge between three things: the object's live state on the
-server, the file you're applying now, and the *previous* applied
-configuration (which kubectl stores on the object itself, in the
-`kubectl.kubernetes.io/last-applied-configuration` annotation seen
-above). That three-way comparison is what lets `apply` do something a
-simple overlay can't: a field that was in the previous applied config
-but is missing from the new file gets actively removed from the live
-object, not just left alone. Re-running the same `apply` twice is a
-no-op PATCH, not two creates - which is what makes `apply` safe to wire
-into a loop or a CI pipeline.
+**Why**: `kubectl apply` doesn't delete and recreate the object, and it
+doesn't just add whatever is in the file either. It compares three
+things:
 
-**Example**: apply the relabeled version of the same namespace, inspect
-identity fields to confirm nothing was recreated, then apply the
-*original* file again and check whether the added label survives:
+- the object as it is now on the server,
+- the file you're applying, and
+- the file you applied last time, which `kubectl` keeps on the object
+  in the `kubectl.kubernetes.io/last-applied-configuration` annotation
+  (seen above).
+
+Because it knows what you applied last time, `apply` can tell when you
+removed a field from the file, and removes it from the object too.
+Applying the same file twice changes nothing the second time, so it's
+safe to run `apply` repeatedly, for example from a CI pipeline.
+
+**Example**: [`namespace-relabeled.yaml`](examples/api-model/namespace-relabeled.yaml)
+is the same Namespace with a label added. Apply it, check that the
+object wasn't recreated, then apply the original file again and see
+whether the label survives:
 
 ```
-kubectl get namespace tutorial-api-model -o jsonpath='{.metadata.uid}{"\n"}{.metadata.creationTimestamp}'
+kubectl get namespace tutorial-api-model -o jsonpath='{.metadata.uid}{"\n"}{.metadata.creationTimestamp}{"\n"}'
 kubectl apply -f tutorial/examples/api-model/namespace-relabeled.yaml
-kubectl get namespace tutorial-api-model -o jsonpath='{.metadata.uid}{"\n"}{.metadata.creationTimestamp}'
-kubectl get namespace tutorial-api-model -o jsonpath='{.metadata.labels}'
-kubectl apply -f tutorial/examples/api-model/namespace.yaml
-kubectl get namespace tutorial-api-model -o jsonpath='{.metadata.labels}'
+kubectl get namespace tutorial-api-model -o jsonpath='{.metadata.uid}{"\n"}{.metadata.creationTimestamp}{"\n"}'
+kubectl get namespace tutorial-api-model -o jsonpath='{.metadata.labels}{"\n"}'
 ```
 
-**Expected output**: `uid` and `creationTimestamp` are identical before
-and after the relabel apply - proof the object was patched in place, not
-deleted and recreated:
+**Expected output**: `uid` and `creationTimestamp` are the same before
+and after: the object was changed in place, not deleted and recreated.
+The label is there:
 
 ```
-7ce8ace6-fb9f-46c3-a194-b990ca2cd702
-2026-08-28T03:34:24Z
-```
-```
+1193fa2f-5f1d-4b0a-b943-38a310fb626a
+2026-11-19T11:59:48Z
 namespace/tutorial-api-model configured
-```
-```
-7ce8ace6-fb9f-46c3-a194-b990ca2cd702
-2026-08-28T03:34:24Z
-```
-
-The label is present right after the relabel apply:
-
-```
+1193fa2f-5f1d-4b0a-b943-38a310fb626a
+2026-11-19T11:59:48Z
 {"kubernetes.io/metadata.name":"tutorial-api-model","tutorial.example/stage":"relabeled"}
 ```
 
-Then, after re-applying the *original* file (which never had that
-label), it's genuinely gone - not just absent from the file, absent from
-the live object:
+Now apply the original file again, which doesn't have that label:
+
+```
+kubectl apply -f tutorial/examples/api-model/namespace.yaml
+kubectl get namespace tutorial-api-model -o jsonpath='{.metadata.labels}{"\n"}'
+```
+
+**Expected output**: the label is gone from the object:
 
 ```
 namespace/tutorial-api-model configured
-```
-```
 {"kubernetes.io/metadata.name":"tutorial-api-model"}
 ```
 
-This is the failure mode worth internalizing: a common wrong mental
-model is "apply only ever adds fields, so it's always safe regardless of
-what I removed from the file." It isn't - `apply` actively deletes
-fields you drop from the source, provided they were part of what you
-applied last time. `kubernetes.io/metadata.name` survives both applies
-because it was never something *you* applied - the admission controller
-that set it, not kubectl, is that field's manager, and `apply`'s merge
-only ever touches fields it owns.
+So `apply` doesn't only add. If you remove a field from a file you
+applied before, `apply` removes it from the object.
+`kubernetes.io/metadata.name` survives because you never applied it: it
+isn't in the `last-applied-configuration` annotation, so `apply`
+leaves it alone.
 
 ### Cleaning up
 
-This chapter leaves two namespaces behind, `tutorial-api-model` and
-`tutorial-api-model-team-b`, along with the `namespace-demo` Pods in
-them. Deleting a namespace deletes everything inside it, so this one
-command removes all of it:
+Two namespaces are left, `tutorial-api-model` and
+`tutorial-api-model-team-b`, with a `namespace-demo` Pod in each.
+Deleting a namespace deletes everything in it, so one command removes
+it all:
 
 ```
 kubectl delete namespace tutorial-api-model tutorial-api-model-team-b
 ```
 
-Namespace deletion waits for the Pods to terminate, so it can take a
-few seconds to return.
+```
+namespace "tutorial-api-model" deleted
+namespace "tutorial-api-model-team-b" deleted
+```
+
+It waits for the Pods to stop, so it can take several seconds.
