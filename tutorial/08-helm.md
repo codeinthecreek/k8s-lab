@@ -22,45 +22,23 @@ back or uninstall the whole set as one unit with `helm upgrade`,
 `helm rollback` and `helm uninstall`. Plain `kubectl apply` has nothing
 like that.
 
-This chapter uses Helm v4. Charts themselves haven't changed since v3
-(`apiVersion: v2` in `Chart.yaml`), but v4 applies objects with
-**server-side apply** by default. You can see that on any object Helm
-manages:
+This chapter uses Helm v4:
 
 ```
 helm version
-kubectl get deploy <a-helm-managed-deployment> -o jsonpath='{.metadata.managedFields[*].manager}{"\n"}{.metadata.managedFields[0].operation}'
-```
-
-**Expected output**:
-
-```
-version.BuildInfo{Version:"v4.2.2", ...}
 ```
 
 ```
-helm kube-controller-manager
-Apply
+version.BuildInfo{Version:"v4.3.0", GitCommit:"bec5b06ed841fe5269972d864d5177944fd5970f", GitTreeState:"", GoVersion:"go1.27.1-X:nodwarf5", KubeClientVersion:"v1.37"}
 ```
 
-Every object records which programs (field managers) set its fields.
-Here `helm` set them with the operation `Apply`, which means server-side
-apply.
-
-Chapter 2's `kubectl apply` is *client-side* apply (the default unless
-you pass `--server-side`). `kubectl` works out the changes itself, and
-stores the configuration it applied in the
-`kubectl.kubernetes.io/last-applied-configuration` annotation so it can
-compare next time. With server-side apply, the API server does that
-work instead. It records which manager owns each field and settles
-conflicts between managers. No annotation is needed, so objects that
-Helm manages don't have one.
-
-Two smaller v4 changes, in case you see the old names elsewhere:
-`helm fetch` is now `helm pull` (the old name still works), and
-`--atomic` is now `--rollback-on-failure` (the old flag still works but
-prints `Flag --atomic has been deprecated, use --rollback-on-failure
-instead`).
+Charts haven't changed since v3 (`apiVersion: v2` in `Chart.yaml`). Two
+smaller v4 changes, in case you see the old names elsewhere: `helm
+fetch` is now `helm pull` (the old name still works), and `--atomic` is
+now `--rollback-on-failure` (the old flag still works but prints `Flag
+--atomic has been deprecated, use --rollback-on-failure instead`). The
+bigger change, server-side apply, is shown after the first install
+below.
 
 Many Helm tutorials use Bitnami's charts (`bitnami/*`) as examples.
 Since **August 28, 2025**, most of those charts and images need a paid
@@ -83,37 +61,52 @@ layout:
 applying anything, so you can see exactly what would be created.
 `kubectl apply` has no equivalent preview.
 
-**Example**: scaffold a chart and render it without installing:
+**Example**: create a chart in the current directory and list its
+files:
 
 ```
 helm create services-demo-chart
-helm template services-demo services-demo-chart/
+find services-demo-chart | sort
 ```
 
-**Expected output**: the chart's files, then plain Kubernetes YAML with
-every placeholder filled in. `helm template` doesn't contact the
-cluster:
+**Expected output**:
 
 ```
 Creating services-demo-chart
-
+services-demo-chart
+services-demo-chart/charts
 services-demo-chart/Chart.yaml
-services-demo-chart/values.yaml
+services-demo-chart/.helmignore
+services-demo-chart/templates
 services-demo-chart/templates/deployment.yaml
-services-demo-chart/templates/service.yaml
-services-demo-chart/templates/serviceaccount.yaml
+services-demo-chart/templates/_helpers.tpl
 services-demo-chart/templates/hpa.yaml
+services-demo-chart/templates/httproute.yaml
 services-demo-chart/templates/ingress.yaml
 services-demo-chart/templates/NOTES.txt
-services-demo-chart/templates/_helpers.tpl
+services-demo-chart/templates/serviceaccount.yaml
+services-demo-chart/templates/service.yaml
+services-demo-chart/templates/tests
 services-demo-chart/templates/tests/test-connection.yaml
+services-demo-chart/values.yaml
 ```
+
+Now fill in the templates without installing anything. The full output
+is long, one document per object, so `--show-only` picks just the
+Service:
+
+```
+helm template services-demo services-demo-chart/ --show-only templates/service.yaml
+```
+
+**Expected output**: plain Kubernetes YAML with every placeholder
+filled in. `helm template` doesn't contact the cluster:
 
 ```yaml
 ---
-# Source: services-demo-chart/templates/serviceaccount.yaml
+# Source: services-demo-chart/templates/service.yaml
 apiVersion: v1
-kind: ServiceAccount
+kind: Service
 metadata:
   name: services-demo-services-demo-chart
   labels:
@@ -122,20 +115,13 @@ metadata:
     app.kubernetes.io/instance: services-demo
     app.kubernetes.io/version: "1.16.0"
     app.kubernetes.io/managed-by: Helm
-automountServiceAccountToken: true
-
----
-# Source: services-demo-chart/templates/service.yaml
-apiVersion: v1
-kind: Service
-metadata:
-  name: services-demo-services-demo-chart
-  ...
 spec:
   type: ClusterIP
   ports:
     - port: 80
       targetPort: http
+      protocol: TCP
+      name: http
   selector:
     app.kubernetes.io/name: services-demo-chart
     app.kubernetes.io/instance: services-demo
@@ -154,117 +140,190 @@ returns to an earlier revision's manifests. As with a Deployment's
 rollback in chapter 3, it doesn't go back in history: it records a
 *new* revision with the old content. Revision numbers only go up.
 
-**Example**: install the chart, upgrade it with a different value, then
-roll back:
+**Example**: install the chart as a release called `services-demo`,
+then list releases:
 
 ```
 helm install services-demo services-demo-chart/
 helm list
-kubectl get deploy -l app.kubernetes.io/instance=services-demo
-helm upgrade services-demo services-demo-chart/ --set replicaCount=2
-helm history services-demo
-kubectl get deploy -l app.kubernetes.io/instance=services-demo
-helm rollback services-demo 1
-helm history services-demo
 ```
 
-**Expected output**: the install is revision 1, with 1 replica. The
-upgrade to `replicaCount=2` is revision 2, and the Deployment scales to
-2. Rolling back to 1 creates **revision 3**, with the same content as
-revision 1:
+**Expected output**: the release is at revision 1. `helm install` ends
+by printing the chart's `NOTES.txt`, which the next section uses:
 
 ```
 NAME: services-demo
-...
+LAST DEPLOYED: Thu Nov 19 11:23:28 2026
+NAMESPACE: default
 STATUS: deployed
 REVISION: 1
-
-NAME                                Ready
-services-demo-services-demo-chart   1/1     1            1           <1s
-
-$ helm upgrade services-demo services-demo-chart/ --set replicaCount=2
-Release "services-demo" has been upgraded. Happy Helming!
-REVISION: 2
-
-REVISION	STATUS    	CHART                    	DESCRIPTION
-1       	superseded	services-demo-chart-0.1.0	Install complete
-2       	deployed  	services-demo-chart-0.1.0	Upgrade complete
-
-NAME                                READY   UP-TO-DATE   AVAILABLE
-services-demo-services-demo-chart   1/2     2            1
-
-$ helm rollback services-demo 1
-Rollback was a success! Happy Helming!
-
-REVISION	STATUS    	CHART                    	DESCRIPTION
-1       	superseded	services-demo-chart-0.1.0	Install complete
-2       	superseded	services-demo-chart-0.1.0	Upgrade complete
-3       	deployed  	services-demo-chart-0.1.0	Rollback to 1
-
-NAME                                READY   UP-TO-DATE   AVAILABLE
-services-demo-services-demo-chart   1/1     1            1
+DESCRIPTION: Install complete
+NOTES:
+1. Get the application URL by running these commands:
+  export POD_NAME=$(kubectl get pods --namespace default -l "app.kubernetes.io/name=services-demo-chart,app.kubernetes.io/instance=services-demo" -o jsonpath="{.items[0].metadata.name}")
+  export CONTAINER_PORT=$(kubectl get pod --namespace default $POD_NAME -o jsonpath="{.spec.containers[0].ports[0].containerPort}")
+  echo "Visit http://127.0.0.1:8080 to use your application"
+  kubectl --namespace default port-forward $POD_NAME 8080:$CONTAINER_PORT
+NAME         	NAMESPACE	REVISION	UPDATED                                	STATUS  	CHART                    	APP VERSION
+services-demo	default  	1       	2026-11-19 11:23:28.860025401 +0000 UTC	deployed	services-demo-chart-0.1.0	1.16.0
 ```
 
-The Deployment is back to 1 replica, and the release is at revision 3,
-not 1. It's the same numbering you saw for a Deployment's rollout
-history in chapter 3, one level up.
+The chart's Deployment has 1 replica. Once its image is pulled:
+
+```
+kubectl get deploy -l app.kubernetes.io/instance=services-demo
+```
+
+```
+NAME                                READY   UP-TO-DATE   AVAILABLE   AGE
+services-demo-services-demo-chart   1/1     1            1           34s
+```
+
+**Server-side apply**: every object records which programs (**field
+managers**) set its fields, and how. Look at the Deployment's:
+
+```
+kubectl get deploy services-demo-services-demo-chart -o jsonpath='{range .metadata.managedFields[*]}{.manager}{" "}{.operation}{"\n"}{end}'
+```
+
+```
+helm Apply
+kube-controller-manager Update
+```
+
+`helm` set the fields with the operation `Apply`, which means
+server-side apply, Helm v4's default. (`kube-controller-manager` updated
+the Deployment's status.)
+
+Chapter 2's `kubectl apply` is *client-side* apply (the default unless
+you pass `--server-side`). `kubectl` works out the changes itself, and
+stores the configuration it applied in the
+`kubectl.kubernetes.io/last-applied-configuration` annotation so it can
+compare next time. With server-side apply, the API server does that
+work instead. It records which manager owns each field and settles
+conflicts between managers. No annotation is needed, so objects that
+Helm manages don't have one.
+
+Now upgrade the release with a different value, look at its history,
+and check the Deployment:
+
+```
+helm upgrade services-demo services-demo-chart/ --set replicaCount=2
+helm history services-demo
+kubectl get deploy -l app.kubernetes.io/instance=services-demo
+```
+
+**Expected output**: the upgrade is revision 2, and the Deployment now
+wants 2 replicas. Here the second Pod was still starting:
+
+```
+Release "services-demo" has been upgraded. Happy Helming!
+NAME: services-demo
+LAST DEPLOYED: Thu Nov 19 11:24:12 2026
+NAMESPACE: default
+STATUS: deployed
+REVISION: 2
+...
+REVISION	UPDATED                 	STATUS    	CHART                    	APP VERSION	DESCRIPTION
+1       	Thu Nov 19 11:23:28 2026	superseded	services-demo-chart-0.1.0	1.16.0     	Install complete
+2       	Thu Nov 19 11:24:12 2026	deployed  	services-demo-chart-0.1.0	1.16.0     	Upgrade complete
+NAME                                READY   UP-TO-DATE   AVAILABLE   AGE
+services-demo-services-demo-chart   1/2     2            1           52s
+```
+
+(`...` stands for the `NOTES.txt` text, printed again after every
+upgrade.) Now roll back to revision 1:
+
+```
+helm rollback services-demo 1
+helm history services-demo
+kubectl get deploy -l app.kubernetes.io/instance=services-demo
+```
+
+**Expected output**: rolling back to 1 creates **revision 3**, with the
+same content as revision 1, and the Deployment is back to 1 replica:
+
+```
+Rollback was a success! Happy Helming!
+REVISION	UPDATED                 	STATUS    	CHART                    	APP VERSION	DESCRIPTION
+1       	Thu Nov 19 11:23:28 2026	superseded	services-demo-chart-0.1.0	1.16.0     	Install complete
+2       	Thu Nov 19 11:24:12 2026	superseded	services-demo-chart-0.1.0	1.16.0     	Upgrade complete
+3       	Thu Nov 19 11:24:21 2026	deployed  	services-demo-chart-0.1.0	1.16.0     	Rollback to 1
+NAME                                READY   UP-TO-DATE   AVAILABLE   AGE
+services-demo-services-demo-chart   1/1     1            1           58s
+```
+
+The release is at revision 3, not 1. It's the same numbering you saw
+for a Deployment's rollout history in chapter 3, one level up.
+
+### A chart's Service is still just a Service
+
+**Why**: a Service installed by Helm follows the same rules as any other
+(chapter 5). A `ClusterIP` Service can't be reached from your host, and
+`kubectl port-forward` is the reliable way in. The chart's `NOTES.txt`
+usually explains how to reach the application. The chart's author wrote
+it for whatever environment they had in mind, so read it, but check
+that it suits a kind cluster.
+
+**Example**: the `NOTES.txt` that `helm create` generates, printed by
+`helm install` above, gets this right: it suggests `kubectl
+port-forward`, not a URL. Run its commands, with `&` to keep the
+port-forward running in the background, then fetch the page:
+
+```
+export POD_NAME=$(kubectl get pods --namespace default -l "app.kubernetes.io/name=services-demo-chart,app.kubernetes.io/instance=services-demo" -o jsonpath="{.items[0].metadata.name}")
+export CONTAINER_PORT=$(kubectl get pod --namespace default $POD_NAME -o jsonpath="{.spec.containers[0].ports[0].containerPort}")
+kubectl --namespace default port-forward $POD_NAME 8080:$CONTAINER_PORT &
+curl -sS http://127.0.0.1:8080 | head -4
+kill %1
+```
+
+**Expected output**: nginx answers through the port-forward, as in
+chapter 5:
+
+```
+Forwarding from 127.0.0.1:8080 -> 80
+Forwarding from [::1]:8080 -> 80
+Handling connection for 8080
+<!DOCTYPE html>
+<html>
+<head>
+<title>Welcome to nginx!</title>
+```
+
+Without the port-forward, the Service can't be reached from your host.
+Try the `CLUSTER-IP` that `kubectl get svc` shows:
+
+```
+kubectl get svc services-demo-services-demo-chart
+curl -sS -m 5 http://<CLUSTER-IP>
+```
+
+**Expected output**: `curl` gives up after 5 seconds (`-m 5`), as
+chapter 5 showed for any `ClusterIP` Service:
+
+```
+NAME                                TYPE        CLUSTER-IP     EXTERNAL-IP   PORT(S)   AGE
+services-demo-services-demo-chart   ClusterIP   10.96.72.172   <none>        80/TCP    18s
+curl: (28) Connection timed out after 5001 milliseconds
+```
+
+### Removing a release
 
 `helm uninstall` removes every object the chart created, in one
-command:
+command. The chart directory is only on your machine; delete it too:
 
 ```
 helm uninstall services-demo
 kubectl get deploy,svc,sa -l app.kubernetes.io/instance=services-demo
+rm -r services-demo-chart
 ```
 
 **Expected output**:
 
 ```
 release "services-demo" uninstalled
-
 No resources found in default namespace.
-```
-
-### A chart's Service is still just a Service
-
-**Why**: a Service installed by Helm follows the same rules as any other
-(chapter 5). A `ClusterIP` Service can't be reached from your host, and
-`kubectl port-forward` is the reliable way in. After every install and
-upgrade, Helm prints the chart's `NOTES.txt`, usually with instructions
-for reaching the application. The chart's author wrote them for
-whatever environment they had in mind, so read them, but check that
-they suit a kind cluster.
-
-**Example**: the `NOTES.txt` that `helm create` generates, printed by
-`helm install` above, gets this right. It suggests `kubectl
-port-forward`, not a URL:
-
-```
-1. Get the application URL by running these commands:
-  export POD_NAME=$(kubectl get pods --namespace default -l "app.kubernetes.io/name=services-demo-chart,app.kubernetes.io/instance=services-demo" -o jsonpath="{.items[0].metadata.name}")
-  export CONTAINER_PORT=$(kubectl get pod --namespace default $POD_NAME -o jsonpath="{.spec.containers[0].ports[0].containerPort}")
-  echo "Visit http://127.0.0.1:8080 to use your application"
-  kubectl --namespace default port-forward $POD_NAME 8080:$CONTAINER_PORT
-```
-
-**Expected output**: following it works, and nginx answers through
-`port-forward`, as in chapter 5:
-
-```
-Forwarding from 127.0.0.1:18081 -> 80
-
-<!DOCTYPE html>
-<html>
-<head>
-<title>Welcome to nginx!</title>
-...
-```
-
-Connecting directly from the host, without `port-forward`, fails, as
-chapter 5 showed for any `ClusterIP` Service:
-
-```
-curl: (7) Failed to connect to localhost:18081 after 0 ms: Could not connect to server
 ```
 
 ### Installing a published chart from a repository
@@ -288,35 +347,52 @@ to use:
 
 ```
 helm search hub podinfo
+helm search repo podinfo
 helm repo add podinfo https://stefanprodan.github.io/podinfo
 helm repo list
 helm search repo podinfo
 ```
 
 **Expected output**: `search hub` finds two charts called `podinfo`,
-from different publishers. After `repo add`, `search repo` finds the
-one from the repository you added; before it, it would find
-nothing:
+from different publishers (it shortens long URLs). `search repo` finds
+nothing until you've added a repository; afterwards it finds the chart
+in the one you added:
 
 ```
-URL                                                    CHART VERSION   APP VERSION   DESCRIPTION
-https://artifacthub.io/packages/helm/podinfo/podinfo   6.15.0          6.15.0        Podinfo Helm chart for Kubernetes
-https://artifacthub.io/packages/helm/flagger/podinfo   6.1.4           6.1.3         Flagger canary deployment demo application
-
+URL                                               	CHART VERSION	APP VERSION	DESCRIPTION
+https://artifacthub.io/packages/helm/podinfo/po...	6.17.0       	6.17.0     	Podinfo Helm chart for Kubernetes
+https://artifacthub.io/packages/helm/flagger/po...	6.1.4        	6.1.3      	Flagger canary deployment demo application
+Error: no repositories configured
 "podinfo" has been added to your repositories
-
-NAME      URL
-podinfo   https://stefanprodan.github.io/podinfo
-
-NAME              CHART VERSION   APP VERSION   DESCRIPTION
-podinfo/podinfo   6.15.0          6.15.0        Podinfo Helm chart for Kubernetes
+NAME   	URL
+podinfo	https://stefanprodan.github.io/podinfo
+NAME           	CHART VERSION	APP VERSION	DESCRIPTION
+podinfo/podinfo	6.17.0       	6.17.0     	Podinfo Helm chart for Kubernetes
 ```
+
+If you've added other repositories before, the first `search repo`
+searches those instead of printing the error.
 
 Installing from a repository uses the same `helm install`, with
 `<repo>/<chart>` instead of a local directory:
 
 ```
 helm install helm-demo-podinfo podinfo/podinfo
+```
+
+```
+NAME: helm-demo-podinfo
+LAST DEPLOYED: Thu Nov 19 11:24:46 2026
+NAMESPACE: default
+STATUS: deployed
+REVISION: 1
+DESCRIPTION: Install complete
+...
+```
+
+When the image has been pulled, which took about 3 minutes here:
+
+```
 kubectl get pods -l app.kubernetes.io/name=helm-demo-podinfo
 ```
 
@@ -324,12 +400,8 @@ kubectl get pods -l app.kubernetes.io/name=helm-demo-podinfo
 yourself:
 
 ```
-NAME: helm-demo-podinfo
-STATUS: deployed
-REVISION: 1
-
-NAME                                  READY   STATUS    RESTARTS   AGE
-helm-demo-podinfo-5cff48488c-8j5zb    1/1     Running   0          25s
+NAME                                 READY   STATUS    RESTARTS   AGE
+helm-demo-podinfo-84f9d5874f-bh74j   1/1     Running   0          3m1s
 ```
 
 **Removing the repository**: a repository you added only affects your
