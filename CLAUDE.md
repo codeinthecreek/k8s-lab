@@ -13,6 +13,7 @@ make up [PROFILE=name]         # kind create cluster + apply that profile's mani
 make down [PROFILE=name]       # kind delete cluster
 make reset [PROFILE=name]      # down + up
 make list-profiles             # ls kind/profiles
+make help                      # list targets from their ## descriptions
 make kubeconfig [PROFILE=name] # kind export kubeconfig for that profile
 make status [PROFILE=name]     # kubectl get nodes -o wide + get pods -A
 make clean [PROFILE=name]      # only PROFILE=gpu-real has a step (removes lab-helpers/gpu-real/.cache/); otherwise prints "nothing to clean"

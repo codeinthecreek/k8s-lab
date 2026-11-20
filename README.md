@@ -179,6 +179,7 @@ Run `make list-profiles` to list them from the filesystem directly.
 | `make down PROFILE=x`         | `kind delete cluster` for that profile | Uses `default` |
 | `make reset PROFILE=x`        | `down` then `up` | Uses `default` |
 | `make list-profiles`          | List `kind/profiles/*` | n/a - no `PROFILE` |
+| `make help`                   | List the targets with a one-line description of each | n/a - no `PROFILE` |
 | `make kubeconfig PROFILE=x`   | `kind export kubeconfig` for that profile | Uses `default` |
 | `make status PROFILE=x`       | `kubectl get nodes -o wide` and `get pods -A` against that profile's context (errors clearly if it isn't up) | Auto-detects whichever profile's cluster is currently running |
 | `make clean PROFILE=x`        | For `gpu-real`: removes `lab-helpers/gpu-real/.cache/` (refuses while the cluster exists). For any other profile: prints "nothing to clean" and does nothing | Uses `default` (prints the "nothing to clean" message) |

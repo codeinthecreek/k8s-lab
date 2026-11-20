@@ -48,10 +48,10 @@ GPU_REAL_NODE_IMAGE := kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8
 # deletable by `make clean`.
 GPU_REAL_GOENV      := GOPATH=$(GPU_REAL_CACHE)/go GOBIN=$(GPU_REAL_CACHE)/bin GOMODCACHE=$(GPU_REAL_CACHE)/go/pkg/mod GOCACHE=$(GPU_REAL_CACHE)/gocache GOFLAGS=-modcacherw GOTOOLCHAIN=local
 
-.PHONY: up down reset list-profiles kubeconfig status nfs-up nfs-down nfs-status nfs-client-install registry-up registry-down registry-status registry-client-install clean gpu-real-env
+.PHONY: up down reset list-profiles kubeconfig status nfs-up nfs-down nfs-status nfs-client-install registry-up registry-down registry-status registry-client-install clean gpu-real-env help
 
 ifneq ($(PROFILE),gpu-real)
-up:
+up: ## create the cluster for PROFILE and apply its manifests (gpu-real: via nvkind)
 	@if [ ! -f $(PROFILE_DIR)/cluster.yaml ]; then \
 		echo "no such profile: $(PROFILE_DIR)/cluster.yaml not found" >&2; \
 		exit 1; \
@@ -77,18 +77,18 @@ up:
 	@echo '    eval "$$(make -s gpu-real-env)"'
 endif
 
-down:
+down: ## delete the kind cluster for PROFILE
 	kind delete cluster --name $(CLUSTER_NAME)
 
-reset: down up
+reset: down up ## delete and recreate the cluster for PROFILE
 
-list-profiles:
+list-profiles: ## list the profile directories (gpu-real is not one)
 	@ls kind/profiles
 
-kubeconfig:
+kubeconfig: ## export the cluster's kubeconfig and set the kubectl context
 	kind export kubeconfig --name $(CLUSTER_NAME)
 
-status:
+status: ## show nodes and pods (PROFILE, or the single running k8s-lab cluster)
 	@if [ "$(origin PROFILE)" = "command line" ]; then \
 		cluster="$(CLUSTER_NAME)"; \
 	else \
@@ -114,7 +114,7 @@ status:
 
 # --- lab-helpers/nfs-server (NFS-backed PV/PVC lab exercise) --------------
 
-nfs-up:
+nfs-up: ## start the NFS server container for PV/PVC exercises
 	@if [ -n "$$(docker ps -q -f name=^/$(NFS_CONTAINER)$$)" ]; then \
 		echo "$(NFS_CONTAINER) already running"; \
 		exit 0; \
@@ -142,7 +142,7 @@ nfs-up:
 		$(NFS_IMAGE) >/dev/null; \
 	echo "$(NFS_CONTAINER) started - see lab-helpers/nfs-server/README.md for the fsid=0 mount-path note"
 
-nfs-down:
+nfs-down: ## stop and remove the NFS server container
 	@if [ -n "$$(docker ps -aq -f name=^/$(NFS_CONTAINER)$$)" ]; then \
 		docker rm -f $(NFS_CONTAINER) >/dev/null; \
 		echo "$(NFS_CONTAINER) removed ($(NFS_DATA_DIR) left in place)"; \
@@ -150,7 +150,7 @@ nfs-down:
 		echo "$(NFS_CONTAINER) not running"; \
 	fi
 
-nfs-status:
+nfs-status: ## show the NFS server container (and showmount output, if available)
 	@docker ps --filter "name=^/$(NFS_CONTAINER)$$" --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
 	@if command -v showmount >/dev/null 2>&1; then \
 		ip="$$(docker inspect $(NFS_CONTAINER) --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 2>/dev/null)"; \
@@ -170,7 +170,7 @@ nfs-status:
 		echo "showmount not found on host - optional, part of nfs-common (Debian/Arch) - skipping export check"; \
 	fi
 
-nfs-client-install:
+nfs-client-install: ## install the NFS client (nfs-common) on the cluster nodes
 	@nodes="$$(kind get nodes --name $(CLUSTER_NAME) 2>/dev/null)"; \
 	if [ -z "$$nodes" ]; then \
 		echo "no nodes found for cluster $(CLUSTER_NAME) - is PROFILE=$(PROFILE) up?" >&2; \
@@ -188,7 +188,7 @@ nfs-client-install:
 
 # --- lab-helpers/registry (local image registry for tutorial ch. 13) -----
 
-registry-up:
+registry-up: ## start the local image registry container
 	@if [ -n "$$(docker ps -q -f name=^/$(REGISTRY_CONTAINER)$$)" ]; then \
 		echo "$(REGISTRY_CONTAINER) already running"; \
 		exit 0; \
@@ -209,7 +209,7 @@ registry-up:
 		$(REGISTRY_IMAGE) >/dev/null; \
 	echo "$(REGISTRY_CONTAINER) started - run 'make registry-client-install PROFILE=x' before pulling from it on that profile"
 
-registry-down:
+registry-down: ## stop and remove the local registry container
 	@if [ -n "$$(docker ps -aq -f name=^/$(REGISTRY_CONTAINER)$$)" ]; then \
 		docker rm -f $(REGISTRY_CONTAINER) >/dev/null; \
 		echo "$(REGISTRY_CONTAINER) removed ($(REGISTRY_DATA_DIR) left in place)"; \
@@ -217,7 +217,7 @@ registry-down:
 		echo "$(REGISTRY_CONTAINER) not running"; \
 	fi
 
-registry-status:
+registry-status: ## show the local registry container and its repositories
 	@docker ps --filter "name=^/$(REGISTRY_CONTAINER)$$" --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
 	@if [ -n "$$(docker ps -q -f name=^/$(REGISTRY_CONTAINER)$$)" ]; then \
 		echo "--- repositories (via host-published port) ---"; \
@@ -225,7 +225,7 @@ registry-status:
 		echo; \
 	fi
 
-registry-client-install:
+registry-client-install: ## point the cluster nodes' containerd at the local registry
 	@if [ -z "$$(docker ps -q -f name=^/$(REGISTRY_CONTAINER)$$)" ]; then \
 		echo "$(REGISTRY_CONTAINER) not running - run 'make registry-up' first" >&2; \
 		exit 1; \
@@ -255,7 +255,7 @@ registry-client-install:
 # --- lab-helpers/gpu-real (real GPU on a kind worker, tutorial ch. 17-18) ---
 
 # Prints export lines; use as: eval "$(make -s gpu-real-env)". Read-only.
-gpu-real-env:
+gpu-real-env: ## print HELM_* exports pointing at the gpu-real cache
 	@echo 'export HELM_CONFIG_HOME=$(GPU_REAL_CACHE)/helm/config'
 	@echo 'export HELM_CACHE_HOME=$(GPU_REAL_CACHE)/helm/cache'
 	@echo 'export HELM_DATA_HOME=$(GPU_REAL_CACHE)/helm/data'
@@ -267,7 +267,7 @@ gpu-real-env:
 # image is shared with the other profiles. The nvidia/ images used inside the
 # cluster live in the nodes' containerd and go away with `make down`.
 ifeq ($(PROFILE),gpu-real)
-clean:
+clean: ## remove lab-helpers/gpu-real/.cache (PROFILE=gpu-real, cluster must be down)
 	@if kind get clusters 2>/dev/null | grep -qx $(CLUSTER_NAME); then \
 		echo "cluster $(CLUSTER_NAME) exists - run 'make down PROFILE=gpu-real' first" >&2; \
 		exit 1; \
@@ -284,3 +284,9 @@ else
 clean:
 	@echo "nothing to clean for PROFILE=$(PROFILE) (only PROFILE=gpu-real has a clean step)"
 endif
+
+# Lists every target that has a "## description" on its rule line. Targets
+# defined in both halves of an ifeq carry the description on one half only,
+# so each appears once.
+help: ## list the make targets
+	@grep -hE '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_DIR)/Makefile | awk -F':.*## ' '{printf "  %-24s %s\n", $$1, $$2}'
